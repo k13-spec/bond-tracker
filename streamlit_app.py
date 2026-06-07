@@ -184,6 +184,176 @@ def load_bonds() -> pd.DataFrame:
 
 
 # ------------------------------------------------------------------ #
+# Sector grouping (mirrors ratings tool)
+# ------------------------------------------------------------------ #
+_SECTOR_GROUPS = {
+    "Corporate": [
+        "Auto", "Auto Components", "Automobiles", "2/3 Wheelers",
+        "Passenger Cars & Utility Vehicles", "Commercial Vehicles", "Tractors",
+        "Tyres & Rubber Products", "Batteries - Automobile",
+        "Aerospace & Defense", "Bearings", "Castings & Forgings",
+        "Cement & Cement Products", "Chemicals", "Chemicals & Petrochemicals",
+        "Specialty Chemicals", "Commodity Chemicals", "Carbon Black",
+        "Dyes And Pigments", "Explosives", "Fertilizers  ",
+        "Petrochemicals", "Petroleum Products", "Consumable Fuels",
+        "Consumer Durables", "Consumer Electronics", "Household Appliances",
+        "Household Products", "Personal Care", "Personal Products",
+        "Gems, Jewellery And Watches", "Diversified Consumer Products",
+        "Diversified FMCG", "FMCG", "Cigarettes & Tobacco Products",
+        "Food Products", "Dairy Products", "Packaged Foods",
+        "Other Food Products", "Edible Oil", "Sugar", "Tea & Coffee",
+        "Other Beverages", "Breweries & Distilleries", "Agriculture",
+        "Animal Feed", "Other Agricultural Products",
+        "Healthcare", "Pharmaceuticals", "Pharmaceuticals ",
+        "Biotechnology", "Hospital", "Healthcare Service Provider",
+        "Healthcare Research, Analytics & Technology",
+        "Medical Equipment & Supplies",
+        "Technology", "Information Technology",
+        "Computers - Software & Consulting", "Computers Hardware & Equipments",
+        "IT Enabled Services", "Software Products", "Data Processing Services",
+        "E-Learning", "Business Process Outsourcing (BPO) / Knowledge Process Outsourcing (KPO)",
+        "Digital Entertainment", "Media & Entertainment",
+        "Film Production, Distribution & Exhibition",
+        "TV Broadcasting & Software Production", "Electronic Media",
+        "Advertising & Media Agencies",
+        "Retail", "Diversified Retail", "Speciality Retail",
+        "E-Retail/ E- Commerce", "Distributors", "Trading & Distributors",
+        "Education", "Hotels & Resorts", "Restaurants",
+        "Amusement Parks/ Other Recreation", "Tour, Travel Related Services",
+        "Construction", "Civil Construction", "Real Estate",
+        "Residential, Commercial Projects", "Real Estate Investment Trusts (REITs)",
+        "Real Estate related services",
+        "Textiles & Apparels", "Garments & Apparels",
+        "Cotton Textiles - Composite", "Other Textile Products",
+        "Iron & Steel", "Iron & Steel Products", "Ferrous Metals",
+        "Diversified Metals", "Aluminium, Copper & Zinc Products",
+        "Minerals & Mining", "Coal",
+        "Cement & Cement Products", "Other Construction Materials",
+        "Paper & Paper Products", "Forest Products", "Printing & Publication",
+        "Packaging", "Plastic Products - Consumer",
+        "Industrial Manufacturing", "Industrial Products",
+        "Heavy Electrical Equipment", "Electrical Equipment",
+        "Industrial Electronics", "Industrial Machinery",
+        "Engineering, Designing & Construction",
+        "Diversified", "Multi-Product Companies", "Holding Company",
+        "Trading - Chemicals", "Trading - Metals", "Trading - Minerals",
+        "Consumer Services", "Commercial Services & Supplies",
+        "Diversified Commercial Services", "Consulting Services",
+        "Wellness", "Other Consumer Services",
+    ],
+    "Infrastructure": [
+        "Infrastructure", "Civil Construction",
+        "Electric Utilities", "Electricity Generation", "Power Trading",
+        "Power - Transmission", "Multi Utilities", "Utilities",
+        "Oil Exploration & Production", "Refineries & Marketing",
+        "Oil Storage & Transportation", "Gas Transmission/ Marketing",
+        "LPG/CNG/PN G/LNG Supplier", "Industrial Gas",
+        "Airport & Airport services", "Airline",
+        "Port & Port services", "Dredging", "Shipping",
+        "Railways", "Road Transport", "Toll bridge operator",
+        "Logistics Solution Provider", "Transport Related Services",
+        "Waste Management", "Water Supply & Management",
+        "Telecom - Cellular & Fixed line services",
+        "Telecom - Equipment & Accessories", "Telecom - Infrastructure",
+        "Other Telecom Services",
+    ],
+    "Financial": [
+        "Finance", "Financial Institution",
+        "Non-Banking Financial Company (NBFC)", "Housing Finance Company",
+        "Private Sector Bank", "Public Sector Bank", "Other Bank",
+        "Asset Management Company", "Investment Company",
+        "Life Insurance", "General Insurance", "Other Insurance Companies",
+        "Insurance Distributors", "Financial Technology (Fintech)",
+        "Stockbroking & Allied",
+        "Depositories, Clearing Houses and Other Intermediaries",
+        "Other Capital Market related Services", "Other Financial Services",
+    ],
+}
+
+_PSU_FRAGMENTS = [
+    "ntpc ", "bhel ", " sail ", "ongc", "iocl", "gail ",
+    "nalco", "nmdc", "nhpc", "npcil", "powergrid",
+    "irfc", "nhai ", "hudco", "sidbi", "nabard",
+    "coal india", "indian oil", "bharat petroleum",
+    "hindustan petroleum", "oil and natural gas",
+    "gas authority", "steel authority",
+    "national aluminium", "national mineral development",
+    "national thermal power", "national highways authority",
+    "bharat heavy electricals", "bharat electronics",
+    "bharat dynamics", "hindustan aeronautics",
+    "state bank of india", "punjab national bank",
+    "bank of baroda", "bank of india", "bank of maharashtra",
+    "canara bank", "union bank of india", "central bank of india",
+    "indian bank ", "uco bank",
+    "life insurance corporation",
+    "power finance corp", "rural electrification corp",
+    "housing and urban development", "national bank for agriculture",
+    "export import bank", "exim bank",
+    "rec limited", "pfc limited",
+    "food corporation of india", "oil india", "mrpl", "bpcl", "hpcl",
+]
+
+
+def _is_psu(name: str) -> bool:
+    n = (" " + (name or "").lower() + " ")
+    return any(f in n for f in _PSU_FRAGMENTS)
+
+
+def _sector_group(sector: str) -> str:
+    for grp, members in _SECTOR_GROUPS.items():
+        if sector in members:
+            return grp
+    return "Corporate"
+
+
+def _sector_checkbox_panel(available_sectors: list) -> list:
+    grouped: dict[str, list] = {"Corporate": [], "Infrastructure": [], "Financial": []}
+    for s in available_sectors:
+        grouped[_sector_group(s)].append(s)
+
+    for s in available_sectors:
+        wkey = f"bchk_{s}"
+        if wkey not in st.session_state:
+            st.session_state[wkey] = True
+
+    st.markdown("**Sectors**")
+    qc1, qc2, qc3 = st.columns(3)
+    if qc1.button("All",  key="bsec_all",  use_container_width=True):
+        for s in available_sectors:
+            st.session_state[f"bchk_{s}"] = True
+        st.rerun()
+    if qc2.button("None", key="bsec_none", use_container_width=True):
+        for s in available_sectors:
+            st.session_state[f"bchk_{s}"] = False
+        st.rerun()
+    if qc3.button("Corp", key="bsec_corp", use_container_width=True,
+                  help="Corporate sectors only"):
+        for s in available_sectors:
+            st.session_state[f"bchk_{s}"] = (_sector_group(s) == "Corporate")
+        st.rerun()
+
+    selected = []
+    for grp in ["Corporate", "Infrastructure", "Financial"]:
+        members = grouped.get(grp, [])
+        if not members:
+            continue
+        with st.expander(grp, expanded=(grp == "Corporate")):
+            ga1, ga2 = st.columns(2)
+            if ga1.button("All",  key=f"bgrp_all_{grp}",  use_container_width=True):
+                for s in members:
+                    st.session_state[f"bchk_{s}"] = True
+                st.rerun()
+            if ga2.button("None", key=f"bgrp_none_{grp}", use_container_width=True):
+                for s in members:
+                    st.session_state[f"bchk_{s}"] = False
+                st.rerun()
+            for sector in sorted(members):
+                if st.checkbox(sector or "(unclassified)", key=f"bchk_{sector}"):
+                    selected.append(sector)
+    return selected
+
+
+# ------------------------------------------------------------------ #
 # App UI
 # ------------------------------------------------------------------ #
 
@@ -206,10 +376,8 @@ if df.empty:
 today = date.today()
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Upcoming Bonds", f"{len(df):,}")
-col2.metric("Maturing in 30 days",
-            f"{(df['Days to Maturity'] <= 30).sum():,}")
-col3.metric("Maturing in 90 days",
-            f"{(df['Days to Maturity'] <= 90).sum():,}")
+col2.metric("Maturing in 30 days",  f"{(df['Days to Maturity'] <= 30).sum():,}")
+col3.metric("Maturing in 90 days",  f"{(df['Days to Maturity'] <= 90).sum():,}")
 col4.metric("Data as of", today.strftime("%d %b %Y"))
 
 st.divider()
@@ -220,79 +388,139 @@ st.divider()
 with st.sidebar:
     st.header("Filters")
 
-    # Issue size
-    size_vals = df["Issue Size (Cr)"].dropna()
-    if not size_vals.empty:
-        size_min_val = float(size_vals.min())
-        size_max_val = float(size_vals.max())
-        st.subheader("Issue Size (Crores)")
-        min_size = st.number_input("Minimum", min_value=0.0, value=0.0, step=50.0, format="%.0f")
-        max_size = st.number_input("Maximum", min_value=0.0, value=size_max_val, step=500.0, format="%.0f")
-    else:
-        min_size, max_size = 0.0, 1e12
+    if st.button("↺  Refresh Data", type="secondary", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
-    st.subheader("Rating")
-    all_ratings = sorted(df["Rating"].dropna().unique().tolist(), key=lambda r: RATING_GRADES.index(r) if r in RATING_GRADES else 99)
-    selected_ratings = st.multiselect("Select ratings (leave blank = all)", all_ratings)
+    st.divider()
 
-    st.subheader("Listing Status")
-    listing_opts = ["All"] + sorted(df["Listing Status"].dropna().unique().tolist())
-    selected_listing = st.selectbox("", listing_opts, index=0)
+    # ---- Issuer search ----
+    issuer_search = st.text_input(
+        "Search Issuer Name", placeholder="e.g. Tata, Reliance, HDFC…"
+    ).strip()
 
-    st.subheader("Instrument Type")
-    all_types = sorted(df["Type"].dropna().unique().tolist())
-    selected_types = st.multiselect("Select types (leave blank = all)", all_types)
+    st.divider()
 
-    st.subheader("Maturity Window")
-    max_days = st.slider(
-        "Show bonds maturing within N days (0 = no limit)",
-        min_value=0, max_value=3650, value=0, step=30
+    # ---- Rating ----
+    grade_options = {
+        "AAA only":       ["AAA"],
+        "AA+ or better":  ["AAA", "AA+"],
+        "AA or better":   ["AAA", "AA+", "AA"],
+        "AA- or better":  ["AAA", "AA+", "AA", "AA-"],
+        "A+ or better":   ["AAA", "AA+", "AA", "AA-", "A+"],
+        "A or better":    ["AAA", "AA+", "AA", "AA-", "A+", "A"],
+        "A- or better":   ["AAA", "AA+", "AA", "AA-", "A+", "A", "A-"],
+        "BBB+ or better": ["AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+"],
+        "All rated":      RATING_GRADES,
+        "All (inc. unrated)": None,
+    }
+    grade_choice = st.selectbox(
+        "Minimum Rating",
+        options=list(grade_options.keys()),
+        index=list(grade_options.keys()).index("All (inc. unrated)"),
+    )
+    selected_grade_set = grade_options[grade_choice]
+
+    st.divider()
+
+    # ---- Issue size ----
+    st.markdown("**Issue Size (₹ Crores)**")
+    sc1, sc2 = st.columns(2)
+    min_size = sc1.number_input("Min", min_value=0.0, value=0.0, step=50.0, format="%.0f", label_visibility="collapsed")
+    max_size = sc2.number_input("Max (0=no limit)", min_value=0.0, value=0.0, step=500.0, format="%.0f", label_visibility="collapsed")
+    sc1.caption("Min Cr")
+    sc2.caption("Max Cr (0=no limit)")
+
+    st.divider()
+
+    # ---- Listing status ----
+    listed_choice = st.radio(
+        "Listing Status",
+        options=["All", "Listed only", "Unlisted only"],
+        index=0,
+        horizontal=True,
+    )
+
+    # ---- PSU / sovereign ----
+    exclude_psu = st.checkbox(
+        "Exclude PSU / Sovereign",
+        help="Hide government-owned / public sector issuers (name-based detection)",
     )
 
     st.divider()
-    st.subheader("Sort")
-    sort_col = st.selectbox("Sort by", [
-        "Maturity Date", "Issue Date", "Issue Size (Cr)", "Rating", "Issuer", "Days to Maturity"
-    ])
-    sort_asc = st.radio("Order", ["Ascending", "Descending"]) == "Ascending"
+
+    # ---- Instrument type ----
+    with st.expander("Instrument Type", expanded=False):
+        all_types = sorted(df["Type"].dropna().unique().tolist())
+        selected_types = st.multiselect("Types (blank = all)", all_types, label_visibility="collapsed")
+
+    # ---- Maturity window ----
+    with st.expander("Maturity Window", expanded=False):
+        max_days = st.slider(
+            "Maturing within N days (0 = no limit)",
+            min_value=0, max_value=3650, value=0, step=30,
+        )
 
     st.divider()
-    if st.button("Force Refresh Data", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
+
+    # ---- Sectors ----
+    available_sectors = sorted(df["Sector"].dropna().unique().tolist())
+    available_sectors = [s for s in available_sectors if s]
+    selected_sectors = _sector_checkbox_panel(available_sectors)
+
+    st.divider()
+
+    # ---- Sort ----
+    st.markdown("**Sort**")
+    sort_col = st.selectbox("Sort by", [
+        "Maturity Date", "Issue Date", "Issue Size (Cr)", "Rating", "Issuer", "Days to Maturity"
+    ], label_visibility="collapsed")
+    sort_asc = st.radio("Order", ["Ascending", "Descending"], horizontal=True) == "Ascending"
 
 # ------------------------------------------------------------------ #
 # Apply filters
 # ------------------------------------------------------------------ #
 filtered = df.copy()
 
+# Issuer search
+if issuer_search:
+    filtered = filtered[filtered["Issuer"].str.contains(issuer_search, case=False, na=False)]
+
+# Rating filter
+if selected_grade_set is not None:
+    grade_set = set(selected_grade_set)
+    filtered = filtered[filtered["Rating"].isin(grade_set)]
+
+# Issue size
 if min_size > 0:
     filtered = filtered[filtered["Issue Size (Cr)"].fillna(0) >= min_size]
-if max_size < float(df["Issue Size (Cr)"].max() or 1e12):
+if max_size > 0:
     filtered = filtered[filtered["Issue Size (Cr)"].fillna(0) <= max_size]
-if selected_ratings:
-    filtered = filtered[filtered["Rating"].isin(selected_ratings)]
-if selected_listing != "All":
-    filtered = filtered[filtered["Listing Status"] == selected_listing]
+
+# Listing
+if listed_choice == "Listed only":
+    filtered = filtered[filtered["Listing Status"] == "Listed"]
+elif listed_choice == "Unlisted only":
+    filtered = filtered[filtered["Listing Status"] == "Unlisted"]
+
+# PSU exclude
+if exclude_psu:
+    filtered = filtered[~filtered["Issuer"].apply(_is_psu)]
+
+# Instrument type
 if selected_types:
     filtered = filtered[filtered["Type"].isin(selected_types)]
+
+# Maturity window
 if max_days > 0:
     filtered = filtered[filtered["Days to Maturity"] <= max_days]
 
+# Sectors — only apply if not all selected
+if selected_sectors and len(selected_sectors) < len(available_sectors):
+    filtered = filtered[filtered["Sector"].isin(selected_sectors)]
+
 # Sort
-sort_col_map = {
-    "Maturity Date": "Maturity Date",
-    "Issue Date": "Issue Date",
-    "Issue Size (Cr)": "Issue Size (Cr)",
-    "Rating": "Rating",
-    "Issuer": "Issuer",
-    "Days to Maturity": "Days to Maturity",
-}
-filtered = filtered.sort_values(
-    sort_col_map[sort_col],
-    ascending=sort_asc,
-    na_position="last",
-)
+filtered = filtered.sort_values(sort_col, ascending=sort_asc, na_position="last")
 
 # ------------------------------------------------------------------ #
 # Display table
@@ -316,14 +544,13 @@ st.dataframe(
     height=580,
     hide_index=True,
     column_config={
-        "ISIN": st.column_config.TextColumn(width="small"),
-        "Issuer": st.column_config.TextColumn(width="large"),
-        "Days to Maturity": st.column_config.NumberColumn(
-            "Days Left", format="%d", width="small"
-        ),
+        "ISIN":           st.column_config.TextColumn(width="small"),
+        "Issuer":         st.column_config.TextColumn(width="large"),
+        "Days to Maturity": st.column_config.NumberColumn("Days Left", format="%d", width="small"),
         "Issue Size (Cr)": st.column_config.TextColumn("Size (Cr)", width="small"),
-        "Rating": st.column_config.TextColumn(width="small"),
+        "Rating":         st.column_config.TextColumn(width="small"),
         "Listing Status": st.column_config.TextColumn("Listing", width="small"),
+        "Sector":         st.column_config.TextColumn(width="medium"),
     },
 )
 
@@ -337,8 +564,8 @@ EXPORT_COLS = [
     "Sector", "Issuer Type", "Mode of Issue",
 ]
 export_df = filtered[[c for c in EXPORT_COLS if c in filtered.columns]].copy()
-export_df["Issue Date"]    = export_df["Issue Date"].dt.strftime("%d/%m/%Y") if "Issue Date" in export_df else ""
-export_df["Maturity Date"] = export_df["Maturity Date"].dt.strftime("%d/%m/%Y") if "Maturity Date" in export_df else ""
+export_df["Issue Date"]    = export_df["Issue Date"].dt.strftime("%d/%m/%Y")
+export_df["Maturity Date"] = export_df["Maturity Date"].dt.strftime("%d/%m/%Y")
 
 csv_bytes = export_df.to_csv(index=False).encode("utf-8")
 st.download_button(
