@@ -1,8 +1,8 @@
 """
-India Bond Maturity Tracker â€” Streamlit app.
+India Bond Maturity Tracker — Streamlit app.
 
 Data is pulled directly from the NSDL public API and cached for 24 hours.
-No database or persistent storage required â€” works out of the box on
+No database or persistent storage required — works out of the box on
 Streamlit Community Cloud.
 
 Deploy: push this repo to GitHub, then connect it at share.streamlit.io
@@ -25,7 +25,7 @@ import streamlit as st
 # ------------------------------------------------------------------ #
 st.set_page_config(
     page_title="India Bond Maturity Tracker",
-    page_icon="ðŸ“Š",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -393,11 +393,11 @@ def _sector_checkbox_panel(available_sectors: list) -> list:
 # App UI
 # ------------------------------------------------------------------ #
 
-st.title("ðŸ“Š India Bond Maturity Tracker")
-st.caption("Data: NSDL India Bond Info Â· Refreshed every 24 hours Â· Source: indiabondinfo.nsdl.com")
+st.title("📊 India Bond Maturity Tracker")
+st.caption("Data: NSDL India Bond Info · Refreshed every 24 hours · Source: indiabondinfo.nsdl.com")
 
 # Load data
-with st.spinner("Loading bond data from NSDLâ€¦ (first load takes ~30 seconds)"):
+with st.spinner("Loading bond data from NSDL… (first load takes ~30 seconds)"):
     try:
         df = load_bonds()
     except Exception as e:
@@ -424,7 +424,7 @@ st.divider()
 with st.sidebar:
     st.header("Filters")
 
-    if st.button("â†º  Refresh Data", type="secondary", use_container_width=True):
+    if st.button("↺  Refresh Data", type="secondary", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -465,7 +465,7 @@ with st.sidebar:
     st.divider()
 
     # ---- Issue size ----
-    st.markdown("**Issue Size (â‚¹ Crores)**")
+    st.markdown("**Issue Size (₹ Crores)**")
     sc1, sc2 = st.columns(2)
     min_size = sc1.number_input("Min", min_value=0.0, value=0.0, step=50.0, format="%.0f", label_visibility="collapsed")
     max_size = sc2.number_input("Max (0=no limit)", min_value=0.0, value=0.0, step=500.0, format="%.0f", label_visibility="collapsed")
@@ -571,7 +571,7 @@ if selected_types:
 if max_days > 0:
     filtered = filtered[filtered["Days to Maturity"] <= max_days]
 
-# Sectors â€” only apply if not all selected
+# Sectors — only apply if not all selected
 if selected_sectors and len(selected_sectors) < len(available_sectors):
     filtered = filtered[filtered["Sector"].isin(selected_sectors)]
 
@@ -581,7 +581,7 @@ filtered = filtered.sort_values(sort_col, ascending=sort_asc, na_position="last"
 # ------------------------------------------------------------------ #
 # Display table
 # ------------------------------------------------------------------ #
-st.subheader(f"Upcoming Maturities â€” {len(filtered):,} bonds")
+st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
 
 DISPLAY_COLS = [
     "ISIN", "Issuer", "Type", "Coupon Rate (%)", "Issue Date", "Maturity Date",
@@ -591,7 +591,7 @@ display_df = filtered[DISPLAY_COLS].copy()
 display_df["Issue Date"]    = display_df["Issue Date"].dt.strftime("%d/%m/%Y")
 display_df["Maturity Date"] = display_df["Maturity Date"].dt.strftime("%d/%m/%Y")
 display_df["Issue Size (Cr)"] = display_df["Issue Size (Cr)"].apply(
-    lambda x: f"{x:,.2f}" if pd.notna(x) else "â€”"
+    lambda x: f"{x:,.2f}" if pd.notna(x) else "—"
 )
 
 display_df["View Ratings"] = display_df["Issuer"].apply(
@@ -649,6 +649,6 @@ st.download_button(
 )
 
 st.caption(
-    "âš ï¸ Listing Status is derived from Mode of Issue (Public Issue â†’ Listed; "
-    "Private Placement â†’ Unlisted). For definitive listing status, check BSE/NSE."
+    "⚠️ Listing Status is derived from Mode of Issue (Public Issue → Listed; "
+    "Private Placement → Unlisted). For definitive listing status, check BSE/NSE."
 )
