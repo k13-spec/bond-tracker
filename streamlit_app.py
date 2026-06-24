@@ -307,6 +307,41 @@ def _sector_group(sector: str) -> str:
     return "Corporate"
 
 
+# ------------------------------------------------------------------
+# Ratings-DB enrichment (optional, cached)
+# ------------------------------------------------------------------
+_CO_STOP_RT = {"limited","ltd","private","pvt","llp","corporation",
+              "corp","inc","co","bank","finance","financial"}
+
+
+def _normalize_co_rt(name: str) -> str:
+    words = [w.strip('.,&') for w in name.lower().split()]
+    return " ".join(w for w in words if w not in _CO_STOP_RT).strip()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_ratings_lookup() -> dict:
+    """Download ratings_current.csv from ratings-tool repo. Cached 1h."""
+    url = ("https://raw.githubusercontent.com/k13-spec/ratings-tool"
+           "/master/data/ratings_current.csv")
+    try:
+        df = pd.read_csv(url)
+        lookup = {}
+        for _, row in df.iterrows():
+            key = _normalize_co_rt(str(row.get("company_name", "")))
+            if key:
+                lookup[key] = {
+                    "rating":  str(row.get("rating", "") or ""),
+                    "grade":   int(row["grade"]) if pd.notna(row.get("grade")) else None,
+                    "agency":  str(row.get("agency", "") or ""),
+                    "outlook": str(row.get("outlook", "") or ""),
+                }
+        return lookup
+    except Exception:
+        return {}
+
+
+
 def _sector_checkbox_panel(available_sectors: list) -> list:
     grouped: dict[str, list] = {"Corporate": [], "Infrastructure": [], "Financial": []}
     for s in available_sectors:
@@ -483,6 +518,14 @@ with st.sidebar:
     ], label_visibility="collapsed")
     sort_asc = st.radio("Order", ["Ascending", "Descending"], horizontal=True) == "Ascending"
 
+    st.divider()
+    # ---- Ratings DB ----
+    show_db_ratings = st.checkbox(
+        "Enrich with ratings DB",
+        value=False,
+        help="Adds DB Rating column from the ratings tool. Downloads ~2 MB; cached 1h.",
+    )
+
 # ------------------------------------------------------------------ #
 # Apply filters
 # ------------------------------------------------------------------ #
@@ -555,6 +598,15 @@ display_df["View Ratings"] = display_df["Issuer"].apply(
     lambda x: ("https://indianratings.streamlit.app/?company=" + urllib.parse.quote(str(x)))
     if pd.notna(x) else ""
 )
+if show_db_ratings:
+    _rt_lookup = _load_ratings_lookup()
+    if _rt_lookup:
+        display_df["DB Rating"] = display_df["Issuer"].apply(
+            lambda x: _rt_lookup.get(_normalize_co_rt(str(x)), {}).get("rating", "")
+        )
+        display_df["DB Grade"] = display_df["Issuer"].apply(
+            lambda x: _rt_lookup.get(_normalize_co_rt(str(x)), {}).get("grade")
+        )
 st.dataframe(
     display_df,
     use_container_width=True,
@@ -568,6 +620,8 @@ st.dataframe(
         "Rating":         st.column_config.TextColumn(width="small"),
         "View Ratings":   st.column_config.LinkColumn("Ratings", display_text="↗", width="small"),
         "Listing Status": st.column_config.TextColumn("Listing", width="small"),
+        "DB Rating":      st.column_config.TextColumn("DB Rating", width="small"),
+        "DB Grade":       st.column_config.NumberColumn("DB Grade", format="%d", width="small"),
         "Sector":         st.column_config.TextColumn(width="medium"),
     },
 )
