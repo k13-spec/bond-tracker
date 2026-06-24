@@ -11,6 +11,7 @@ Deploy: push this repo to GitHub, then connect it at share.streamlit.io
 import io
 import re
 import time
+import urllib.parse
 import warnings
 from datetime import date, datetime
 
@@ -394,8 +395,11 @@ with st.sidebar:
 
     st.divider()
     # ---- Search ----
+    # Pre-fill from deep-link: ?issuer=HDFC
+    _qp_issuer = st.query_params.get("issuer", "")
     search_query = st.text_input(
-        "Search by ISIN or Issuer", placeholder="e.g. INE002A07HF3, Tata, HDFC"
+        "Search by ISIN or Issuer", placeholder="e.g. INE002A07HF3, Tata, HDFC",
+        value=_qp_issuer,
     ).strip()
 
     maturity_years = sorted(df["Maturity Date"].dt.year.dropna().unique().astype(int).tolist())
@@ -547,6 +551,10 @@ display_df["Issue Size (Cr)"] = display_df["Issue Size (Cr)"].apply(
     lambda x: f"{x:,.2f}" if pd.notna(x) else "â€”"
 )
 
+display_df["View Ratings"] = display_df["Issuer"].apply(
+    lambda x: ("https://indianratings.streamlit.app/?company=" + urllib.parse.quote(str(x)))
+    if pd.notna(x) else ""
+)
 st.dataframe(
     display_df,
     use_container_width=True,
@@ -558,6 +566,7 @@ st.dataframe(
         "Days to Maturity": st.column_config.NumberColumn("Days Left", format="%d", width="small"),
         "Issue Size (Cr)": st.column_config.TextColumn("Size (Cr)", width="small"),
         "Rating":         st.column_config.TextColumn(width="small"),
+        "View Ratings":   st.column_config.LinkColumn("Ratings", display_text="↗", width="small"),
         "Listing Status": st.column_config.TextColumn("Listing", width="small"),
         "Sector":         st.column_config.TextColumn(width="medium"),
     },
