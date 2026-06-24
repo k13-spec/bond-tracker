@@ -1,8 +1,8 @@
 """
-India Bond Maturity Tracker — Streamlit app.
+India Bond Maturity Tracker â€” Streamlit app.
 
 Data is pulled directly from the NSDL public API and cached for 24 hours.
-No database or persistent storage required — works out of the box on
+No database or persistent storage required â€” works out of the box on
 Streamlit Community Cloud.
 
 Deploy: push this repo to GitHub, then connect it at share.streamlit.io
@@ -24,7 +24,7 @@ import streamlit as st
 # ------------------------------------------------------------------ #
 st.set_page_config(
     page_title="India Bond Maturity Tracker",
-    page_icon="📊",
+    page_icon="ðŸ“Š",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -357,11 +357,11 @@ def _sector_checkbox_panel(available_sectors: list) -> list:
 # App UI
 # ------------------------------------------------------------------ #
 
-st.title("📊 India Bond Maturity Tracker")
-st.caption("Data: NSDL India Bond Info · Refreshed every 24 hours · Source: indiabondinfo.nsdl.com")
+st.title("ðŸ“Š India Bond Maturity Tracker")
+st.caption("Data: NSDL India Bond Info Â· Refreshed every 24 hours Â· Source: indiabondinfo.nsdl.com")
 
 # Load data
-with st.spinner("Loading bond data from NSDL… (first load takes ~30 seconds)"):
+with st.spinner("Loading bond data from NSDLâ€¦ (first load takes ~30 seconds)"):
     try:
         df = load_bonds()
     except Exception as e:
@@ -388,16 +388,18 @@ st.divider()
 with st.sidebar:
     st.header("Filters")
 
-    if st.button("↺  Refresh Data", type="secondary", use_container_width=True):
+    if st.button("â†º  Refresh Data", type="secondary", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
     st.divider()
-
-    # ---- Issuer search ----
-    issuer_search = st.text_input(
-        "Search Issuer Name", placeholder="e.g. Tata, Reliance, HDFC…"
+    # ---- Search ----
+    search_query = st.text_input(
+        "Search by ISIN or Issuer", placeholder="e.g. INE002A07HF3, Tata, HDFC"
     ).strip()
+
+    maturity_years = sorted(df["Maturity Date"].dt.year.dropna().unique().astype(int).tolist())
+    selected_years = st.multiselect("Maturity Year (blank = all)", maturity_years)
 
     st.divider()
 
@@ -424,7 +426,7 @@ with st.sidebar:
     st.divider()
 
     # ---- Issue size ----
-    st.markdown("**Issue Size (₹ Crores)**")
+    st.markdown("**Issue Size (â‚¹ Crores)**")
     sc1, sc2 = st.columns(2)
     min_size = sc1.number_input("Min", min_value=0.0, value=0.0, step=50.0, format="%.0f", label_visibility="collapsed")
     max_size = sc2.number_input("Max (0=no limit)", min_value=0.0, value=0.0, step=500.0, format="%.0f", label_visibility="collapsed")
@@ -482,9 +484,16 @@ with st.sidebar:
 # ------------------------------------------------------------------ #
 filtered = df.copy()
 
-# Issuer search
-if issuer_search:
-    filtered = filtered[filtered["Issuer"].str.contains(issuer_search, case=False, na=False)]
+# ISIN / Issuer search
+if search_query:
+    filtered = filtered[
+        filtered["ISIN"].str.contains(search_query, case=False, na=False) |
+        filtered["Issuer"].str.contains(search_query, case=False, na=False)
+    ]
+
+# Maturity year
+if selected_years:
+    filtered = filtered[filtered["Maturity Date"].dt.year.isin(selected_years)]
 
 # Rating filter
 if selected_grade_set is not None:
@@ -515,7 +524,7 @@ if selected_types:
 if max_days > 0:
     filtered = filtered[filtered["Days to Maturity"] <= max_days]
 
-# Sectors — only apply if not all selected
+# Sectors â€” only apply if not all selected
 if selected_sectors and len(selected_sectors) < len(available_sectors):
     filtered = filtered[filtered["Sector"].isin(selected_sectors)]
 
@@ -525,7 +534,7 @@ filtered = filtered.sort_values(sort_col, ascending=sort_asc, na_position="last"
 # ------------------------------------------------------------------ #
 # Display table
 # ------------------------------------------------------------------ #
-st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
+st.subheader(f"Upcoming Maturities â€” {len(filtered):,} bonds")
 
 DISPLAY_COLS = [
     "ISIN", "Issuer", "Type", "Coupon Rate (%)", "Issue Date", "Maturity Date",
@@ -535,7 +544,7 @@ display_df = filtered[DISPLAY_COLS].copy()
 display_df["Issue Date"]    = display_df["Issue Date"].dt.strftime("%d/%m/%Y")
 display_df["Maturity Date"] = display_df["Maturity Date"].dt.strftime("%d/%m/%Y")
 display_df["Issue Size (Cr)"] = display_df["Issue Size (Cr)"].apply(
-    lambda x: f"{x:,.2f}" if pd.notna(x) else "—"
+    lambda x: f"{x:,.2f}" if pd.notna(x) else "â€”"
 )
 
 st.dataframe(
@@ -577,6 +586,6 @@ st.download_button(
 )
 
 st.caption(
-    "⚠️ Listing Status is derived from Mode of Issue (Public Issue → Listed; "
-    "Private Placement → Unlisted). For definitive listing status, check BSE/NSE."
+    "âš ï¸ Listing Status is derived from Mode of Issue (Public Issue â†’ Listed; "
+    "Private Placement â†’ Unlisted). For definitive listing status, check BSE/NSE."
 )
