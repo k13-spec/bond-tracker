@@ -393,8 +393,19 @@ def _sector_checkbox_panel(available_sectors: list) -> list:
 # App UI
 # ------------------------------------------------------------------ #
 
-st.title("📊 India Bond Maturity Tracker")
-st.caption("Data: NSDL India Bond Info · Refreshed every 24 hours · Source: indiabondinfo.nsdl.com")
+_nt_col, _nl_col = st.columns([7, 1])
+with _nt_col:
+    st.title("📊 India Bond Maturity Tracker")
+    st.caption("Data: NSDL India Bond Info · Refreshed every 24 hours · Source: indiabondinfo.nsdl.com")
+with _nl_col:
+    st.markdown(
+        '<div style="text-align:right;padding-top:18px">\'
+        '<a href="https://indianratings.streamlit.app" target="_blank" \'
+        'style="font-size:13px;color:#4a9eff;border:1px solid #4a9eff;\'
+        'padding:5px 11px;border-radius:6px;text-decoration:none;white-space:nowrap">\'
+        '↗ Credit Ratings</a></div>',
+        unsafe_allow_html=True,
+    )
 
 # Load data
 with st.spinner("Loading bond data from NSDL… (first load takes ~30 seconds)"):
