@@ -399,10 +399,10 @@ with _nt_col:
     st.caption("Data: NSDL India Bond Info · Refreshed every 24 hours · Source: indiabondinfo.nsdl.com")
 with _nl_col:
     st.markdown(
-        '<div style="text-align:right;padding-top:18px">\'
-        '<a href="https://indianratings.streamlit.app" target="_blank" \'
-        'style="font-size:13px;color:#4a9eff;border:1px solid #4a9eff;\'
-        'padding:5px 11px;border-radius:6px;text-decoration:none;white-space:nowrap">\'
+        '<div style="text-align:right;padding-top:18px">'
+        '<a href="https://indianratings.streamlit.app" target="_blank" '
+        'style="font-size:13px;color:#4a9eff;border:1px solid #4a9eff;'
+        'padding:5px 11px;border-radius:6px;text-decoration:none;white-space:nowrap">'
         '↗ Credit Ratings</a></div>',
         unsafe_allow_html=True,
     )
@@ -662,4 +662,12 @@ st.download_button(
 st.caption(
     "⚠️ Listing Status is derived from Mode of Issue (Public Issue → Listed; "
     "Private Placement → Unlisted). For definitive listing status, check BSE/NSE."
+)
+
+# ---- Contact footer ----
+st.markdown(
+    '<div style="text-align:center;margin-top:32px;font-size:12px;color:#888">'
+    '<a href="https://www.linkedin.com/in/saxenakriti/" target="_blank" '
+    'style="color:#888;text-decoration:none">Contact</a></div>',
+    unsafe_allow_html=True,
 )
