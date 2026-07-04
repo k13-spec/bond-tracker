@@ -400,7 +400,7 @@ with _nt_col:
 with _nl_col:
     st.markdown(
         '<div style="text-align:right;padding-top:18px">'
-        '<a href="https://indianratings.streamlit.app" target="_blank" '
+        '<a href="https://creditnexus.streamlit.app" target="_blank" '
         'style="font-size:13px;color:#4a9eff;border:1px solid #4a9eff;'
         'padding:5px 11px;border-radius:6px;text-decoration:none;white-space:nowrap">'
         '↗ Credit Ratings</a></div>',
@@ -606,7 +606,7 @@ display_df["Issue Size (Cr)"] = display_df["Issue Size (Cr)"].apply(
 )
 
 display_df["View Ratings"] = display_df["Issuer"].apply(
-    lambda x: ("https://indianratings.streamlit.app/?company=" + urllib.parse.quote(str(x)))
+    lambda x: ("https://creditnexus.streamlit.app/?company=" + urllib.parse.quote(str(x)))
     if pd.notna(x) else ""
 )
 if show_db_ratings:
