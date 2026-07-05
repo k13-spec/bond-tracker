@@ -1,0 +1,11 @@
+[theme]
+# Portal-inspired — Indigo accent, warm light background, DM Sans
+primaryColor        = "#6366F1"
+backgroundColor     = "#F8F9FF"
+secondaryBackgroundColor = "#EEF2FF"
+textColor           = "#111827"
+font                = "sans serif"
+
+[server]
+headless            = true
+enableCORS          = false
