@@ -2,8 +2,10 @@
 India Bond Maturity Tracker — Streamlit app.
 
 Data is pulled directly from the NSDL public API and cached for 24 hours.
-No database or persistent storage required — works out of the box on
-Streamlit Community Cloud.
+MF yield enrichment (Yield / As of / Holders) comes from data/mf_yields.csv
+in this repo, built fortnightly from the debt-scheme portfolio disclosures
+of HDFC, SBI, ICICI Prudential, Aditya Birla SL, Axis, Nippon, Kotak and
+UTI mutual funds (see build_mf_yields.py).
 
 Deploy: push this repo to GitHub, then connect it at share.streamlit.io
 """
@@ -42,6 +44,11 @@ HEADERS = {
     "Referer": "https://www.indiabondinfo.nsdl.com/CBDServices/",
     "Accept": "*/*",
 }
+
+MF_YIELDS_URL = (
+    "https://raw.githubusercontent.com/k13-spec/bond-tracker"
+    "/main/data/mf_yields.csv"
+)
 
 RATING_GRADES = [
     "AAA", "AA+", "AA", "AA-",
@@ -182,6 +189,31 @@ def load_bonds() -> pd.DataFrame:
         today_dt = pd.Timestamp(date.today())
         df["Days to Maturity"] = (df["Maturity Date"] - today_dt).dt.days.astype("Int64")
     return df
+
+
+# ------------------------------------------------------------------ #
+# MF fortnightly yield enrichment (cached 1 hour)
+# ------------------------------------------------------------------ #
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_mf_yields() -> pd.DataFrame:
+    """Download mf_yields.csv (built from MF fortnightly debt disclosures).
+
+    Columns used: isin, yield, as_of, holders. Cached 1 h.
+    """
+    try:
+        mf = pd.read_csv(MF_YIELDS_URL)
+        mf["isin"] = mf["isin"].astype(str).str.strip()
+        mf = mf.drop_duplicates(subset="isin", keep="first")
+        mf["as_of"] = pd.to_datetime(mf["as_of"], errors="coerce").dt.strftime("%d/%m/%Y")
+        return mf.rename(columns={
+            "isin":    "ISIN",
+            "yield":   "Yield (%)",
+            "as_of":   "As of",
+            "holders": "Holders",
+        })[["ISIN", "Yield (%)", "As of", "Holders"]]
+    except Exception:
+        return pd.DataFrame(columns=["ISIN", "Yield (%)", "As of", "Holders"])
 
 
 # ------------------------------------------------------------------ #
@@ -396,7 +428,8 @@ def _sector_checkbox_panel(available_sectors: list) -> list:
 _nt_col, _nl_col = st.columns([7, 1])
 with _nt_col:
     st.title("📊 India Bond Maturity Tracker")
-    st.caption("Data: NSDL India Bond Info · Refreshed every 24 hours · Source: indiabondinfo.nsdl.com")
+    st.caption("Data: NSDL India Bond Info · Refreshed every 24 hours · "
+               "Yields: MF fortnightly debt disclosures")
 with _nl_col:
     st.markdown(
         '<div style="text-align:right;padding-top:18px">'
@@ -419,12 +452,21 @@ if df.empty:
     st.warning("No upcoming bond maturities found.")
     st.stop()
 
+# MF yield enrichment (Yield / As of / Holders), merged by ISIN
+_mf_yields = _load_mf_yields()
+if not _mf_yields.empty:
+    df = df.merge(_mf_yields, on="ISIN", how="left")
+else:
+    df["Yield (%)"] = None
+    df["As of"] = None
+    df["Holders"] = None
+
 # Stats row
 today = date.today()
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Upcoming Bonds", f"{len(df):,}")
 col2.metric("Maturing in 30 days",  f"{(df['Days to Maturity'] <= 30).sum():,}")
-col3.metric("Maturing in 90 days",  f"{(df['Days to Maturity'] <= 90).sum():,}")
+col3.metric("With MF Yield", f"{df['Yield (%)'].notna().sum():,}")
 col4.metric("Data as of", today.strftime("%d %b %Y"))
 
 st.divider()
@@ -472,6 +514,16 @@ with st.sidebar:
         index=list(grade_options.keys()).index("All (inc. unrated)"),
     )
     selected_grade_set = grade_options[grade_choice]
+
+    st.divider()
+
+    # ---- MF holdings ----
+    only_mf_held = st.checkbox(
+        "Only MF-held bonds",
+        help="Show only bonds appearing in the latest fortnightly debt-scheme "
+             "disclosures of HDFC / SBI / ICICI Pru / Aditya Birla / Axis / "
+             "Nippon / Kotak / UTI MF",
+    )
 
     st.divider()
 
@@ -525,7 +577,8 @@ with st.sidebar:
     # ---- Sort ----
     st.markdown("**Sort**")
     sort_col = st.selectbox("Sort by", [
-        "Maturity Date", "Issue Date", "Issue Size (Cr)", "Rating", "Issuer", "Days to Maturity"
+        "Maturity Date", "Issue Date", "Issue Size (Cr)", "Rating", "Issuer",
+        "Days to Maturity", "Yield (%)"
     ], label_visibility="collapsed")
     sort_asc = st.radio("Order", ["Ascending", "Descending"], horizontal=True) == "Ascending"
 
@@ -557,6 +610,10 @@ if selected_years:
 if selected_grade_set is not None:
     grade_set = set(selected_grade_set)
     filtered = filtered[filtered["Rating"].isin(grade_set)]
+
+# MF-held only
+if only_mf_held:
+    filtered = filtered[filtered["Holders"].notna()]
 
 # Issue size
 if min_size > 0:
@@ -596,7 +653,8 @@ st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
 
 DISPLAY_COLS = [
     "ISIN", "Issuer", "Type", "Coupon Rate (%)", "Issue Date", "Maturity Date",
-    "Days to Maturity", "Issue Size (Cr)", "Rating", "Listing Status", "Sector"
+    "Days to Maturity", "Issue Size (Cr)", "Rating", "Yield (%)", "As of",
+    "Holders", "Listing Status", "Sector"
 ]
 display_df = filtered[DISPLAY_COLS].copy()
 display_df["Issue Date"]    = display_df["Issue Date"].dt.strftime("%d/%m/%Y")
@@ -605,19 +663,15 @@ display_df["Issue Size (Cr)"] = display_df["Issue Size (Cr)"].apply(
     lambda x: f"{x:,.2f}" if pd.notna(x) else "—"
 )
 
-display_df["View Ratings"] = display_df["Issuer"].apply(
-    lambda x: ("https://creditnexus.streamlit.app/?company=" + urllib.parse.quote(str(x)))
-    if pd.notna(x) else ""
-)
 if show_db_ratings:
     _rt_lookup = _load_ratings_lookup()
     if _rt_lookup:
-        display_df["DB Rating"] = display_df["Issuer"].apply(
+        display_df["DB Rating"] = filtered["Issuer"].apply(
             lambda x: _rt_lookup.get(_normalize_co_rt(str(x)), {}).get("rating", "")
-        )
-        display_df["DB Grade"] = display_df["Issuer"].apply(
+        ).values
+        display_df["DB Grade"] = filtered["Issuer"].apply(
             lambda x: _rt_lookup.get(_normalize_co_rt(str(x)), {}).get("grade")
-        )
+        ).values
 st.dataframe(
     display_df,
     use_container_width=True,
@@ -629,7 +683,12 @@ st.dataframe(
         "Days to Maturity": st.column_config.NumberColumn("Days Left", format="%d", width="small"),
         "Issue Size (Cr)": st.column_config.TextColumn("Size (Cr)", width="small"),
         "Rating":         st.column_config.TextColumn(width="small"),
-        "View Ratings":   st.column_config.LinkColumn("Ratings", display_text="↗", width="small"),
+        "Yield (%)":      st.column_config.NumberColumn("Yield (%)", format="%.2f", width="small",
+                                                        help="YTM as marked in the latest MF fortnightly debt-scheme disclosure"),
+        "As of":          st.column_config.TextColumn("As of", width="small",
+                                                      help="Date of the MF disclosure the yield is taken from"),
+        "Holders":        st.column_config.TextColumn("Holders", width="medium",
+                                                      help="Mutual funds holding this bond (from fortnightly disclosures)"),
         "Listing Status": st.column_config.TextColumn("Listing", width="small"),
         "DB Rating":      st.column_config.TextColumn("DB Rating", width="small"),
         "DB Grade":       st.column_config.NumberColumn("DB Grade", format="%d", width="small"),
@@ -643,8 +702,8 @@ st.dataframe(
 EXPORT_COLS = [
     "ISIN", "Issuer", "Type", "Series", "Coupon Rate (%)", "Coupon Type",
     "Coupon Freq", "Issue Date", "Maturity Date", "Days to Maturity",
-    "Issue Size (Cr)", "Rating", "Rating (Full)", "Listing Status",
-    "Sector", "Issuer Type", "Mode of Issue",
+    "Issue Size (Cr)", "Rating", "Rating (Full)", "Yield (%)", "As of",
+    "Holders", "Listing Status", "Sector", "Issuer Type", "Mode of Issue",
 ]
 export_df = filtered[[c for c in EXPORT_COLS if c in filtered.columns]].copy()
 export_df["Issue Date"]    = export_df["Issue Date"].dt.strftime("%d/%m/%Y")
@@ -661,7 +720,11 @@ st.download_button(
 
 st.caption(
     "⚠️ Listing Status is derived from Mode of Issue (Public Issue → Listed; "
-    "Private Placement → Unlisted). For definitive listing status, check BSE/NSE."
+    "Private Placement → Unlisted). For definitive listing status, check BSE/NSE. "
+    "Yield / As of / Holders come from the fortnightly debt-scheme portfolio "
+    "disclosures of HDFC, SBI, ICICI Prudential, Aditya Birla SL, Axis, Nippon, "
+    "Kotak and UTI mutual funds; yields are as per each fund's valuation "
+    "methodology and are not exchange-traded levels."
 )
 
 # ---- Contact footer ----
