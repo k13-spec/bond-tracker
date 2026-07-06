@@ -16,6 +16,7 @@ script calls the same JSON APIs their own websites use.
 import io
 import re
 import sys
+import time
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
@@ -53,9 +54,25 @@ HDFC_SCHEMES = [
 
 
 def get(url, **kw):
-    r = requests.get(url, headers=UA, timeout=60, **kw)
-    r.raise_for_status()
-    return r
+    """GET with 3 attempts on transient failures (connection errors / 5xx).
+
+    4xx raises immediately — a 404 won't heal on retry, and the HDFC/Nippon
+    URL probing relies on fast failure for wrong candidate URLs.
+    """
+    last = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=UA, timeout=60, **kw)
+            r.raise_for_status()
+            return r
+        except requests.HTTPError as e:
+            if e.response is not None and 400 <= e.response.status_code < 500:
+                raise
+            last = e
+        except Exception as e:
+            last = e
+        time.sleep(5 * (attempt + 1))
+    raise last
 
 
 def save(path: Path, content: bytes):

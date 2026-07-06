@@ -176,8 +176,16 @@ def build(files_by_amc, as_of_by_amc, out_csv):
 
 
 if __name__ == "__main__":
+    # Usage: python build_mf_yields.py <disclosures_dir> [as_of YYYY-MM-DD]
+    # as_of defaults to the most recent fortnight-end (15th or prev month-end).
     base = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
-    AS_OF = "2026-06-30"
+    if len(sys.argv) > 2:
+        AS_OF = sys.argv[2]
+    else:
+        from datetime import date, timedelta
+        t = date.today()
+        AS_OF = ((t.replace(day=1) - timedelta(days=1)) if t.day < 13
+                 else t.replace(day=15)).isoformat()
     files = {
         "HDFC":          sorted((base / "hdfc").glob("*.xlsx")),
         "SBI":           [base / "sbi" / "sbi.xlsx"],

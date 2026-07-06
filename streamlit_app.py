@@ -455,6 +455,12 @@ MF_YIELDS_URL = (
     "https://raw.githubusercontent.com/k13-spec/bond-tracker"
     "/main/data/mf_yields.csv"
 )
+MF_HISTORY_URL = (
+    "https://raw.githubusercontent.com/k13-spec/bond-tracker"
+    "/main/data/mf_yields_history.csv"
+)
+# Self-URL used to make ISINs clickable (deep link to the yield-history view)
+APP_BASE_URL = "https://creditnexus-bonds.streamlit.app"
 
 RATING_GRADES = [
     "AAA", "AA+", "AA", "AA-",
@@ -602,24 +608,47 @@ def load_bonds() -> pd.DataFrame:
 # ------------------------------------------------------------------ #
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _load_mf_yields() -> pd.DataFrame:
-    """Download mf_yields.csv (built from MF fortnightly debt disclosures).
-
-    Columns used: isin, yield, as_of, holders. Cached 1 h.
-    """
+def _load_mf_latest_raw() -> pd.DataFrame:
+    """Download mf_yields.csv (latest fortnightly snapshot), as-is. Cached 1 h."""
     try:
         mf = pd.read_csv(MF_YIELDS_URL)
         mf["isin"] = mf["isin"].astype(str).str.strip()
-        mf = mf.drop_duplicates(subset="isin", keep="first")
-        mf["as_of"] = pd.to_datetime(mf["as_of"], errors="coerce").dt.strftime("%d/%m/%Y")
-        return mf.rename(columns={
-            "isin":    "ISIN",
-            "yield":   "Yield (%)",
-            "as_of":   "As of",
-            "holders": "Holders",
-        })[["ISIN", "Yield (%)", "As of", "Holders"]]
+        return mf.drop_duplicates(subset="isin", keep="first")
     except Exception:
+        return pd.DataFrame(
+            columns=["isin", "yield", "as_of", "holders", "source",
+                     "mf_rating", "instrument_name"])
+
+
+def _load_mf_yields() -> pd.DataFrame:
+    """Latest MF yields shaped for the table merge (ISIN / Yield / As of / Holders)."""
+    mf = _load_mf_latest_raw().copy()
+    if mf.empty:
         return pd.DataFrame(columns=["ISIN", "Yield (%)", "As of", "Holders"])
+    mf["as_of"] = pd.to_datetime(mf["as_of"], errors="coerce").dt.strftime("%d/%m/%Y")
+    return mf.rename(columns={
+        "isin":    "ISIN",
+        "yield":   "Yield (%)",
+        "as_of":   "As of",
+        "holders": "Holders",
+    })[["ISIN", "Yield (%)", "As of", "Holders"]]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_mf_history() -> pd.DataFrame:
+    """Download mf_yields_history.csv — every (isin, as_of) yield ever collected.
+
+    One row per ISIN per fortnightly disclosure; grows by one date each refresh.
+    Cached 1 h. Columns: isin, as_of (datetime), yield, source, holders.
+    """
+    try:
+        h = pd.read_csv(MF_HISTORY_URL)
+        h["isin"] = h["isin"].astype(str).str.strip()
+        h["as_of"] = pd.to_datetime(h["as_of"], errors="coerce")
+        h = h.dropna(subset=["as_of", "yield"])
+        return h.sort_values(["isin", "as_of"])
+    except Exception:
+        return pd.DataFrame(columns=["isin", "as_of", "yield", "source", "holders"])
 
 
 # ------------------------------------------------------------------ #
@@ -832,6 +861,101 @@ def _sector_checkbox_panel(available_sectors: list) -> list:
 # ------------------------------------------------------------------ #
 
 st.markdown(_CSS, unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------------ #
+# Yield-history view (deep link: ?isin=INE...)
+# Clicking an ISIN in the main table lands here. Rendered INSTEAD of the
+# main table, and before the NSDL load so it opens instantly.
+# ------------------------------------------------------------------ #
+
+def _render_yield_history(isin: str) -> None:
+    import altair as alt
+
+    meta = _load_mf_latest_raw()
+    row = meta[meta["isin"] == isin]
+    name = str(row["instrument_name"].iloc[0]) if not row.empty and pd.notna(row["instrument_name"].iloc[0]) else ""
+    rating = str(row["mf_rating"].iloc[0]) if not row.empty and pd.notna(row["mf_rating"].iloc[0]) else ""
+
+    st.markdown(
+        f"""
+        <div style="background:linear-gradient(135deg,#6366F1 0%,#818CF8 50%,#A5B4FC 100%);
+                    border-radius:16px;padding:24px 32px;margin-bottom:16px;
+                    box-shadow:0 8px 32px rgba(99,102,241,0.22);">
+            <div style="font-family:'DM Sans',sans-serif;font-size:0.78rem;font-weight:600;
+                        color:rgba(255,255,255,0.75);letter-spacing:0.08em;margin-bottom:4px;">
+                MF YIELD HISTORY</div>
+            <div style="font-family:'DM Sans',sans-serif;font-size:1.45rem;font-weight:700;
+                        color:#FFFFFF;letter-spacing:-0.02em;line-height:1.25;">{isin}</div>
+            <div style="font-family:'DM Sans',sans-serif;font-size:0.9rem;
+                        color:rgba(255,255,255,0.85);margin-top:2px;">
+                {name}{(" &middot; " + rating) if rating else ""}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(f'<a href="{APP_BASE_URL}" target="_self" style="font-family:\'DM Sans\','
+                'sans-serif;font-size:13px;font-weight:600;color:#6366F1;'
+                'text-decoration:none;">← Back to all bonds</a>',
+                unsafe_allow_html=True)
+
+    hist = _load_mf_history()
+    h = hist[hist["isin"] == isin].sort_values("as_of")
+    if h.empty:
+        st.info("No MF yield history for this ISIN yet. History builds up one "
+                "point per fortnightly disclosure (refreshed on the 5th and "
+                "20th of each month).")
+        return
+
+    latest, first = h.iloc[-1], h.iloc[0]
+    prev = h.iloc[-2] if len(h) > 1 else None
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Latest yield", f"{latest['yield']:.2f}%",
+              help=f"As of {latest['as_of']:%d %b %Y} ({latest['source']})")
+    c2.metric("vs previous fortnight",
+              f"{(latest['yield'] - prev['yield']) * 100:+.0f} bps"
+              if prev is not None else "—",
+              help=f"Previous: {prev['yield']:.2f}% as of {prev['as_of']:%d %b %Y}"
+              if prev is not None else "Only one data point so far")
+    c3.metric("Data points", f"{len(h)}",
+              help=f"{first['as_of']:%d %b %Y} → {latest['as_of']:%d %b %Y}")
+    c4.metric("Holders (latest)",
+              f"{len(str(latest['holders']).split(';'))}" if pd.notna(latest["holders"]) else "0",
+              help=str(latest["holders"]))
+
+    chart = (
+        alt.Chart(h.assign(**{"Yield (%)": h["yield"]}))
+        .mark_line(color="#6366F1", strokeWidth=2.5,
+                   point=alt.OverlayMarkDef(size=90, filled=True, color="#4F46E5"))
+        .encode(
+            x=alt.X("as_of:T", title="Disclosure date",
+                    axis=alt.Axis(format="%d %b %y", labelAngle=0)),
+            y=alt.Y("Yield (%):Q", scale=alt.Scale(zero=False)),
+            tooltip=[
+                alt.Tooltip("as_of:T", title="As of", format="%d %b %Y"),
+                alt.Tooltip("Yield (%):Q", format=".2f"),
+                alt.Tooltip("source:N", title="Source AMC"),
+                alt.Tooltip("holders:N", title="Holders"),
+            ],
+        )
+        .properties(height=380)
+    )
+    st.altair_chart(chart, use_container_width=True)
+    if len(h) == 1:
+        st.caption("One data point so far — the trendline builds up with every "
+                   "fortnightly disclosure (5th and 20th of each month).")
+
+    shown = h.rename(columns={"as_of": "As of", "yield": "Yield (%)",
+                              "source": "Source AMC", "holders": "Holders"})
+    shown["As of"] = shown["As of"].dt.strftime("%d/%m/%Y")
+    st.dataframe(shown[["As of", "Yield (%)", "Source AMC", "Holders"]]
+                 .iloc[::-1], hide_index=True, use_container_width=True)
+
+
+_qp_isin = st.query_params.get("isin", "").strip().upper()
+if _qp_isin:
+    _render_yield_history(_qp_isin)
+    st.stop()
 st.markdown(
     """
     <div style="
@@ -1086,6 +1210,10 @@ DISPLAY_COLS = [
     "Holders", "Listing Status", "Sector"
 ]
 display_df = filtered[DISPLAY_COLS].copy()
+# ISIN becomes a link into the yield-history view (?isin=...)
+display_df["ISIN"] = display_df["ISIN"].apply(
+    lambda i: f"{APP_BASE_URL}/?isin={i}"
+)
 display_df["Issue Date"]    = display_df["Issue Date"].dt.strftime("%d/%m/%Y")
 display_df["Maturity Date"] = display_df["Maturity Date"].dt.strftime("%d/%m/%Y")
 display_df["Issue Size (Cr)"] = display_df["Issue Size (Cr)"].apply(
@@ -1107,7 +1235,10 @@ st.dataframe(
     height=580,
     hide_index=True,
     column_config={
-        "ISIN":           st.column_config.TextColumn(width="small"),
+        "ISIN":           st.column_config.LinkColumn(
+                              width="small",
+                              display_text=r"isin=(.*)$",
+                              help="Click to see this bond's MF yield trendline over time"),
         "Issuer":         st.column_config.TextColumn(width="large"),
         "Days to Maturity": st.column_config.NumberColumn("Days Left", format="%d", width="small"),
         "Issue Size (Cr)": st.column_config.TextColumn("Size (Cr)", width="small"),

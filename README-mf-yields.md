@@ -1,55 +1,69 @@
-# MF Yield Enrichment — how it works and how to refresh
+# MF Yield Enrichment — how it works and how it refreshes itself
 
-## What was added to the Bond Tracker
+## What the dashboard shows
 
-Three new columns in the dashboard table (and CSV export), merged by **ISIN**:
+Three columns in the table (and CSV export), merged by **ISIN**:
 
 - **Yield (%)** — YTM of the bond as marked in a mutual fund's fortnightly debt-scheme
   portfolio disclosure (per the fund's valuation methodology).
 - **As of** — date of the disclosure the yield was taken from (15th or month-end).
 - **Holders** — every one of the 8 tracked AMCs whose disclosure contains the ISIN.
 
-Also: the "↗ Ratings" hyperlink column was removed — the NSDL rating now just reads
-as plain text in the **Rating** column. New sidebar filter "Only MF-held bonds",
-new stat "With MF Yield", and "Yield (%)" added as a sort option.
+**Clicking an ISIN** opens that bond's yield-history view (`?isin=INE...`): a
+trendline of every fortnightly yield mark collected so far, with latest yield,
+change vs the previous fortnight, and the full data-point table. The trendline
+grows by one point per fortnight as history accumulates.
 
-## Data pipeline
+## Two data files
 
-1. `fetch_disclosures.py 2026-06-30 disclosures/` — downloads the latest fortnightly
-   disclosures from HDFC, SBI, ICICI Pru, Aditya Birla SL, Axis, Nippon, Kotak, UTI
-   into `disclosures/`. (Run on a normal machine with open internet. Axis sometimes
-   needs a manual download — the script tells you when.)
-2. `build_mf_yields.py disclosures/` — parses all workbooks and writes
-   `disclosures/mf_yields.csv`.
-   - Yields come from the **first** AMC that discloses the ISIN, in this priority
-     order: HDFC → SBI → ICICI Pru → Aditya Birla → Axis → Nippon → Kotak → UTI.
-     Later AMCs never overwrite the yield; they only append to Holders.
-   - Sheets that store yield as a decimal fraction (0.073 = 7.3%) are auto-detected
-     and scaled.
-3. Commit the refreshed CSV to `data/mf_yields.csv` in the `bond-tracker` repo.
-   The live app reloads it within an hour (1-hour cache).
-
-## Refresh cadence
-
-SEBI requires debt-scheme portfolio disclosure within 5 days of each fortnight end,
-so refresh on the **5th** (captures month-end marks) and **20th** (captures 15th
-marks) of each month. A Cowork scheduled task is set up to do this automatically;
-it re-downloads the disclosures, rebuilds the CSV, and pushes it to GitHub.
-
-## Files in this folder
-
-| File | Goes where |
+| File | Contents |
 |---|---|
-| `streamlit_app.py` | replaces `streamlit_app.py` in `k13-spec/bond-tracker` |
-| `data/mf_yields.csv` | new file `data/mf_yields.csv` in `k13-spec/bond-tracker` |
-| `build_mf_yields.py` | new file in `k13-spec/bond-tracker` (parser) |
-| `fetch_disclosures.py` | new file in `k13-spec/bond-tracker` (downloader) |
+| `data/mf_yields.csv` | **Latest fortnight only** — what the main table shows |
+| `data/mf_yields_history.csv` | **Append-only archive** — one row per (ISIN, as_of) per fortnight; feeds the trendline. Seeded 30-Jun-2026. |
+
+## Fully automated refresh (no human intervention)
+
+The GitHub Actions workflow `.github/workflows/mf-yields-refresh.yml` runs on
+GitHub's servers at **10:00 IST on the 5th and 20th** of each month (SEBI requires
+disclosure within 5 days of each fortnight end, so the 5th captures month-end
+marks and the 20th captures 15th marks). Catch-up runs on the **6th and 21st**
+re-try any AMC files that were published late — if nothing changed, they commit
+nothing.
+
+Each run:
+
+1. `fetch_disclosures.py <fortnight-end> disclosures/` — downloads the disclosures
+   of HDFC, SBI, ICICI Pru, Aditya Birla SL, Axis, Nippon, Kotak, UTI
+   (transient network errors are retried; per-AMC misses are logged, not fatal).
+2. `build_mf_yields.py disclosures/ <fortnight-end>` — parses all workbooks into a
+   snapshot CSV. Yields come from the **first** AMC that discloses the ISIN, in
+   priority order HDFC → SBI → ICICI Pru → Aditya Birla → Axis → Nippon → Kotak →
+   UTI; later AMCs only append to Holders. Fraction-style yields (0.073 = 7.3%)
+   are auto-detected per sheet and scaled.
+3. `update_yields.py disclosures/mf_yields.csv .` — replaces `data/mf_yields.csv`
+   and appends the snapshot's yield rows to `data/mf_yields_history.csv`
+   (deduped on ISIN + as_of, so re-runs are harmless).
+   **Safety valve:** if the snapshot has fewer than 500 yields (e.g. every AMC
+   download failed), nothing is written and the job fails loudly instead of
+   wiping good data.
+4. Commits both CSVs as `github-actions[bot]`. The live app picks the change up
+   within its 1-hour cache.
+
+Monitoring: GitHub emails the repo owner on workflow failure, and a Cowork
+scheduled task double-checks each run at 14:00 IST and alerts only if something
+went wrong. To run a refresh manually: repo → Actions → "MF yields fortnightly
+refresh" → Run workflow (optionally passing an explicit fortnight-end date).
 
 ## Caveats
 
 - MF yields are valuation marks, not traded levels; different AMCs can mark the
-  same bond a few bps apart. The dashboard shows the priority-order AMC's mark.
-- Only bonds held by at least one of the 8 AMCs get a yield (~3,800 ISINs as of
-  30-Jun-2026, of which the corporate NCD subset overlaps the NSDL active list).
-- HDFC publishes per-scheme files; its scheme list is hardcoded in
-  `fetch_disclosures.py` and needs updating if HDFC adds/merges debt schemes.
+  same bond differently. The source AMC of each mark is recorded in the `source`
+  column of both CSVs and shown in the trendline tooltips.
+- Per-AMC URL/API quirks live in `fetch_disclosures.py` (Kotak & UTI have JSON
+  APIs; Axis has no stable URL — the last-known pattern is tried, else that
+  fortnight simply lacks Axis data; HDFC is 39 per-scheme files with predictable
+  names — update `HDFC_SCHEMES` if HDFC launches/merges debt schemes; Nippon's
+  file naming is inconsistent, two variants are tried).
+- If AMC websites ever start blocking GitHub's IP ranges, the workflow's job
+  summary will show the misses; the fallback is running the same three scripts
+  on any normal machine and committing the two CSVs.
