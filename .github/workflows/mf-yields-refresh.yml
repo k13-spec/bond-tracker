@@ -1,0 +1,95 @@
+# Fortnightly MF yield refresh — fully automated, no human intervention.
+#
+# Runs on GitHub's servers on the 5th & 20th of each month (10:00 IST),
+# with catch-up runs on the 6th & 21st that pick up any AMC files published
+# late (a catch-up run commits nothing if the data is already complete).
+#
+# Pipeline per run:
+#   fetch_disclosures.py  -> downloads the 8 AMCs' fortnightly disclosures
+#   build_mf_yields.py    -> parses them into a snapshot CSV
+#   update_yields.py      -> data/mf_yields.csv (latest, shown in the table)
+#                            data/mf_yields_history.csv (append-only, feeds
+#                            the per-ISIN yield trendline)
+#   commit + push         -> the live app picks it up within its 1-h cache
+#
+# Safety: update_yields.py aborts (and this job fails, emailing the repo
+# owner) if the snapshot has < 500 yields — a broken run never overwrites
+# good data. Trigger manually anytime from the Actions tab ("Run workflow").
+
+name: MF yields fortnightly refresh
+
+on:
+  schedule:
+    - cron: "30 4 5,6,20,21 * *"   # 10:00 IST on 5th/20th + catch-up next day
+  workflow_dispatch:
+    inputs:
+      as_of:
+        description: "Fortnight-end date YYYY-MM-DD (blank = auto: 15th or previous month-end)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests pandas openpyxl xlrd
+
+      - name: Compute fortnight-end date
+        id: date
+        env:
+          AS_OF_INPUT: ${{ github.event.inputs.as_of }}
+        run: |
+          if [ -n "$AS_OF_INPUT" ]; then
+            AS_OF="$AS_OF_INPUT"
+          else
+            AS_OF=$(python -c "from datetime import date, timedelta; t = date.today(); print(((t.replace(day=1) - timedelta(days=1)) if t.day < 13 else t.replace(day=15)).isoformat())")
+          fi
+          echo "as_of=$AS_OF" >> "$GITHUB_OUTPUT"
+          echo "Fortnight-end: $AS_OF"
+
+      - name: Download AMC disclosures
+        run: python fetch_disclosures.py "${{ steps.date.outputs.as_of }}" disclosures/ 2>&1 | tee fetch_log.txt
+
+      - name: Build yield snapshot
+        run: python build_mf_yields.py disclosures/ "${{ steps.date.outputs.as_of }}" 2>&1 | tee build_log.txt
+
+      - name: Fold snapshot into latest + history
+        run: python update_yields.py disclosures/mf_yields.csv . 2>&1 | tee update_log.txt
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/mf_yields.csv data/mf_yields_history.csv
+          if git diff --cached --quiet; then
+            echo "No data changes — nothing to commit (already up to date)."
+            exit 0
+          fi
+          N_YIELDS=$(grep -oP 'snapshot: \d+ ISINs, \K\d+' update_log.txt || echo "?")
+          MISSES=$(grep -c '^  MISS' fetch_log.txt || true)
+          git commit -m "Auto-refresh MF yields as of ${{ steps.date.outputs.as_of }} (${N_YIELDS} yields, ${MISSES} missed downloads)"
+          git push
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## MF yields refresh — as of ${{ steps.date.outputs.as_of }}"
+            echo '```'
+            grep -E 'MISS|error|ABORT' fetch_log.txt update_log.txt 2>/dev/null || echo "All AMC downloads OK"
+            echo '```'
+            echo '```'
+            cat build_log.txt update_log.txt 2>/dev/null | tail -15
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
