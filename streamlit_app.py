@@ -5,12 +5,15 @@ Data is pulled directly from the NSDL public API and cached for 24 hours.
 MF yield enrichment (Yield / As of / Holders) comes from data/mf_yields.csv
 in this repo, built fortnightly from the debt-scheme portfolio disclosures
 of HDFC, SBI, ICICI Prudential, Aditya Birla SL, Axis, Nippon, Kotak and
-UTI mutual funds (see build_mf_yields.py).
+UTI mutual funds (see build_mf_yields.py). Where a more recent BSE/NSE
+secondary-market trade exists (data/secondary_yields.csv, built by the
+secondary-trades-refresh workflow), it overrides the MF mark.
 
 Deploy: push this repo to GitHub, then connect it at share.streamlit.io
 """
 
 import io
+import json
 import re
 import time
 import urllib.parse
@@ -459,6 +462,23 @@ MF_HISTORY_URL = (
     "https://raw.githubusercontent.com/k13-spec/bond-tracker"
     "/main/data/mf_yields_history.csv"
 )
+SECONDARY_YIELDS_URL = (
+    "https://raw.githubusercontent.com/k13-spec/bond-tracker"
+    "/main/data/secondary_yields.csv"
+)
+SECONDARY_HISTORY_URL = (
+    "https://raw.githubusercontent.com/k13-spec/bond-tracker"
+    "/main/data/secondary_yields_history.csv"
+)
+SECONDARY_META_URL = (
+    "https://raw.githubusercontent.com/k13-spec/bond-tracker"
+    "/main/data/secondary_meta.json"
+)
+# GitHub Actions workflow dispatched by the sidebar "Refresh Secondary Trades" button
+GH_DISPATCH_URL = (
+    "https://api.github.com/repos/k13-spec/bond-tracker"
+    "/actions/workflows/secondary-trades-refresh.yml/dispatches"
+)
 # Self-URL used to make ISINs clickable (deep link to the yield-history view)
 APP_BASE_URL = "https://creditnexus-bonds.streamlit.app"
 
@@ -621,17 +641,18 @@ def _load_mf_latest_raw() -> pd.DataFrame:
 
 
 def _load_mf_yields() -> pd.DataFrame:
-    """Latest MF yields shaped for the table merge (ISIN / Yield / As of / Holders)."""
+    """Latest MF yields shaped for the table merge (ISIN / Yield / As of / Src / Holders)."""
     mf = _load_mf_latest_raw().copy()
     if mf.empty:
-        return pd.DataFrame(columns=["ISIN", "Yield (%)", "As of", "Holders"])
+        return pd.DataFrame(columns=["ISIN", "Yield (%)", "As of", "Src", "Holders"])
     mf["as_of"] = pd.to_datetime(mf["as_of"], errors="coerce").dt.strftime("%d/%m/%Y")
     return mf.rename(columns={
         "isin":    "ISIN",
         "yield":   "Yield (%)",
         "as_of":   "As of",
+        "source":  "Src",
         "holders": "Holders",
-    })[["ISIN", "Yield (%)", "As of", "Holders"]]
+    })[["ISIN", "Yield (%)", "As of", "Src", "Holders"]]
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -649,6 +670,62 @@ def _load_mf_history() -> pd.DataFrame:
         return h.sort_values(["isin", "as_of"])
     except Exception:
         return pd.DataFrame(columns=["isin", "as_of", "yield", "source", "holders"])
+
+
+# ------------------------------------------------------------------ #
+# Secondary-market trade enrichment (BSE/NSE, cached 10 minutes)
+# ------------------------------------------------------------------ #
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _load_secondary_yields() -> pd.DataFrame:
+    """Download secondary_yields.csv — one chosen best BSE/NSE trade per ISIN.
+
+    Cached 10 min (shorter than MF, so a pushed refresh shows up quickly).
+    Columns: isin, yield, as_of (datetime), source ("BSE"/"NSE"), trade_value_cr.
+    """
+    try:
+        sec = pd.read_csv(SECONDARY_YIELDS_URL)
+        sec["isin"] = sec["isin"].astype(str).str.strip()
+        sec["as_of"] = pd.to_datetime(sec["as_of"], errors="coerce")
+        sec = sec.dropna(subset=["as_of", "yield"])
+        return sec.drop_duplicates(subset="isin", keep="first")
+    except Exception:
+        return pd.DataFrame(
+            columns=["isin", "yield", "as_of", "source", "trade_value_cr"])
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _load_secondary_history() -> pd.DataFrame:
+    """Download secondary_yields_history.csv — every captured trade, append-only.
+
+    Cached 10 min. Columns: isin, yield, as_of (datetime), source, trade_value_cr.
+    """
+    try:
+        h = pd.read_csv(SECONDARY_HISTORY_URL)
+        h["isin"] = h["isin"].astype(str).str.strip()
+        h["as_of"] = pd.to_datetime(h["as_of"], errors="coerce")
+        h = h.dropna(subset=["as_of", "yield"])
+        return h.sort_values(["isin", "as_of"])
+    except Exception:
+        return pd.DataFrame(
+            columns=["isin", "yield", "as_of", "source", "trade_value_cr"])
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _load_secondary_meta() -> dict:
+    """Download secondary_meta.json ({"last_refresh": ISO datetime}). Cached 10 min.
+
+    Also accepts a local file path in SECONDARY_META_URL (used by tests).
+    """
+    try:
+        if SECONDARY_META_URL.startswith("http"):
+            r = requests.get(SECONDARY_META_URL, timeout=15)
+            r.raise_for_status()
+            return json.loads(r.text)
+        with open(SECONDARY_META_URL, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 # ------------------------------------------------------------------ #
@@ -884,7 +961,7 @@ def _render_yield_history(isin: str) -> None:
                     box-shadow:0 8px 32px rgba(99,102,241,0.22);">
             <div style="font-family:'DM Sans',sans-serif;font-size:0.78rem;font-weight:600;
                         color:rgba(255,255,255,0.75);letter-spacing:0.08em;margin-bottom:4px;">
-                MF YIELD HISTORY</div>
+                YIELD HISTORY</div>
             <div style="font-family:'DM Sans',sans-serif;font-size:1.45rem;font-weight:700;
                         color:#FFFFFF;letter-spacing:-0.02em;line-height:1.25;">{isin}</div>
             <div style="font-family:'DM Sans',sans-serif;font-size:0.9rem;
@@ -899,12 +976,22 @@ def _render_yield_history(isin: str) -> None:
                 'text-decoration:none;">← Back to all bonds</a>',
                 unsafe_allow_html=True)
 
-    hist = _load_mf_history()
-    h = hist[hist["isin"] == isin].sort_values("as_of")
+    mf_hist = _load_mf_history()
+    sec_hist = _load_secondary_history()
+    hm = mf_hist[mf_hist["isin"] == isin].copy()
+    hs = sec_hist[sec_hist["isin"] == isin].copy()
+    if not hm.empty:
+        hm["kind"] = hm["source"].astype(str)                # AMC name
+    if not hs.empty:
+        hs["kind"] = hs["source"].astype(str) + " trade"     # "BSE trade" / "NSE trade"
+    h = pd.concat([hm, hs], ignore_index=True).sort_values("as_of")
+    for _c in ("holders", "trade_value_cr", "kind"):
+        if _c not in h.columns:
+            h[_c] = float("nan")
     if h.empty:
-        st.info("No MF yield history for this ISIN yet. History builds up one "
-                "point per fortnightly disclosure (refreshed on the 5th and "
-                "20th of each month).")
+        st.info("No yield history for this ISIN yet. History builds up one "
+                "point per fortnightly MF disclosure (refreshed on the 5th and "
+                "20th of each month) plus any captured BSE/NSE trades.")
         return
 
     latest, first = h.iloc[-1], h.iloc[0]
@@ -928,14 +1015,13 @@ def _render_yield_history(isin: str) -> None:
         .mark_line(color="#6366F1", strokeWidth=2.5,
                    point=alt.OverlayMarkDef(size=90, filled=True, color="#4F46E5"))
         .encode(
-            x=alt.X("as_of:T", title="Disclosure date",
+            x=alt.X("as_of:T", title="Date",
                     axis=alt.Axis(format="%d %b %y", labelAngle=0)),
             y=alt.Y("Yield (%):Q", scale=alt.Scale(zero=False)),
             tooltip=[
                 alt.Tooltip("as_of:T", title="As of", format="%d %b %Y"),
                 alt.Tooltip("Yield (%):Q", format=".2f"),
-                alt.Tooltip("source:N", title="Source AMC"),
-                alt.Tooltip("holders:N", title="Holders"),
+                alt.Tooltip("kind:N", title="Source"),
             ],
         )
         .properties(height=380)
@@ -946,9 +1032,12 @@ def _render_yield_history(isin: str) -> None:
                    "fortnightly disclosure (5th and 20th of each month).")
 
     shown = h.rename(columns={"as_of": "As of", "yield": "Yield (%)",
-                              "source": "Source AMC", "holders": "Holders"})
+                              "kind": "Source", "holders": "Holders"})
     shown["As of"] = shown["As of"].dt.strftime("%d/%m/%Y")
-    st.dataframe(shown[["As of", "Yield (%)", "Source AMC", "Holders"]]
+    shown["Trade Value (Cr)"] = shown["trade_value_cr"].apply(
+        lambda x: f"{x:,.2f}" if pd.notna(x) else "—")
+    shown["Holders"] = shown["Holders"].fillna("—")
+    st.dataframe(shown[["As of", "Yield (%)", "Source", "Trade Value (Cr)", "Holders"]]
                  .iloc[::-1], hide_index=True, use_container_width=True)
 
 
@@ -976,7 +1065,7 @@ st.markdown(
             <div style="font-family:'DM Sans',sans-serif;font-size:0.83rem;font-weight:400;
                         color:rgba(255,255,255,0.8);letter-spacing:0.01em;">
                 NSDL India Bond Info &middot; Refreshed every 24 hours &nbsp;&nbsp;|&nbsp;&nbsp;
-                Yields from MF fortnightly debt disclosures
+                Yields from MF fortnightly disclosures and BSE/NSE trades
             </div>
         </div>
         <div>
@@ -1005,21 +1094,43 @@ if df.empty:
     st.warning("No upcoming bond maturities found.")
     st.stop()
 
-# MF yield enrichment (Yield / As of / Holders), merged by ISIN
+# MF yield enrichment (Yield / As of / Src / Holders), merged by ISIN
 _mf_yields = _load_mf_yields()
 if not _mf_yields.empty:
     df = df.merge(_mf_yields, on="ISIN", how="left")
 else:
     df["Yield (%)"] = None
     df["As of"] = None
+    df["Src"] = None
     df["Holders"] = None
+
+# Secondary-trade override (BSE/NSE): where an exchange trade exists and is
+# strictly more recent than the MF mark (or the bond has no MF mark at all),
+# show the traded yield / trade date instead, with Src = exchange name.
+_secondary = _load_secondary_yields()
+if not _secondary.empty:
+    _sec = _secondary.rename(columns={
+        "isin":   "ISIN",
+        "yield":  "_sec_yield",
+        "as_of":  "_sec_as_of",
+        "source": "_sec_src",
+    })[["ISIN", "_sec_yield", "_sec_as_of", "_sec_src"]]
+    df = df.merge(_sec, on="ISIN", how="left")
+    _mf_as_of = pd.to_datetime(df["As of"], format="%d/%m/%Y", errors="coerce")
+    _override = df["_sec_yield"].notna() & (
+        df["Yield (%)"].isna() | (df["_sec_as_of"] > _mf_as_of)
+    )
+    df.loc[_override, "Yield (%)"] = df.loc[_override, "_sec_yield"]
+    df.loc[_override, "As of"] = df.loc[_override, "_sec_as_of"].dt.strftime("%d/%m/%Y")
+    df.loc[_override, "Src"] = df.loc[_override, "_sec_src"]
+    df = df.drop(columns=["_sec_yield", "_sec_as_of", "_sec_src"])
 
 # Stats row
 today = date.today()
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Upcoming Bonds", f"{len(df):,}")
 col2.metric("Maturing in 30 days",  f"{(df['Days to Maturity'] <= 30).sum():,}")
-col3.metric("With MF Yield", f"{df['Yield (%)'].notna().sum():,}")
+col3.metric("With Yield", f"{df['Yield (%)'].notna().sum():,}")
 col4.metric("Data as of", today.strftime("%d %b %Y"))
 
 st.divider()
@@ -1033,6 +1144,49 @@ with st.sidebar:
     if st.button("↺  Refresh Data", type="secondary", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+
+    # ---- Secondary trades refresh (BSE/NSE) ----
+    _sec_meta = _load_secondary_meta()
+    _last_ref = str(_sec_meta.get("last_refresh") or "")
+    if _last_ref:
+        try:
+            _last_ref = (datetime.fromisoformat(_last_ref)
+                         .strftime("%d %b %Y, %H:%M IST"))
+        except ValueError:
+            pass
+    st.caption(f"Secondary trades last refreshed: {_last_ref or 'never'}")
+
+    if st.button("⟳  Refresh Secondary Trades (BSE/NSE)", type="secondary",
+                 use_container_width=True):
+        try:
+            _gh_token = st.secrets.get("GH_WORKFLOW_TOKEN", "")
+        except Exception:
+            _gh_token = ""
+        if not _gh_token:
+            st.error("GH_WORKFLOW_TOKEN is not configured in Streamlit secrets. "
+                     "Add a GitHub token with Actions write access to the app's "
+                     "secrets to enable this button.")
+        else:
+            try:
+                _resp = requests.post(
+                    GH_DISPATCH_URL,
+                    json={"ref": "main"},
+                    headers={
+                        "Authorization": f"Bearer {_gh_token}",
+                        "Accept": "application/vnd.github+json",
+                        "X-GitHub-Api-Version": "2022-11-28",
+                        "User-Agent": "creditnexus-bonds-app",
+                    },
+                    timeout=20,
+                )
+                if _resp.status_code == 204:
+                    st.success("Refresh started — new trades will appear in "
+                               "~2 minutes. Click '↺ Refresh Data' after that.")
+                else:
+                    st.error(f"Workflow dispatch failed "
+                             f"({_resp.status_code}): {_resp.text[:200]}")
+            except Exception as e:
+                st.error(f"Workflow dispatch failed: {e}")
 
     st.divider()
     # ---- Search ----
@@ -1207,7 +1361,7 @@ st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
 DISPLAY_COLS = [
     "ISIN", "Issuer", "Type", "Coupon Rate (%)", "Issue Date", "Maturity Date",
     "Days to Maturity", "Issue Size (Cr)", "Rating", "Yield (%)", "As of",
-    "Holders", "Listing Status", "Sector"
+    "Src", "Holders", "Listing Status", "Sector"
 ]
 display_df = filtered[DISPLAY_COLS].copy()
 # ISIN becomes a link into the yield-history view (?isin=...)
@@ -1246,7 +1400,9 @@ st.dataframe(
         "Yield (%)":      st.column_config.NumberColumn("Yield (%)", format="%.2f", width="small",
                                                         help="YTM as marked in the latest MF fortnightly debt-scheme disclosure"),
         "As of":          st.column_config.TextColumn("As of", width="small",
-                                                      help="Date of the MF disclosure the yield is taken from"),
+                                                      help="Date of the MF disclosure or BSE/NSE trade the yield is taken from"),
+        "Src":            st.column_config.TextColumn("Src", width="small",
+                                                      help="Where the yield comes from: AMC name = MF valuation mark; BSE/NSE = actual exchange trade"),
         "Holders":        st.column_config.TextColumn("Holders", width="medium",
                                                       help="Mutual funds holding this bond (from fortnightly disclosures)"),
         "Listing Status": st.column_config.TextColumn("Listing", width="small"),
@@ -1263,7 +1419,7 @@ EXPORT_COLS = [
     "ISIN", "Issuer", "Type", "Series", "Coupon Rate (%)", "Coupon Type",
     "Coupon Freq", "Issue Date", "Maturity Date", "Days to Maturity",
     "Issue Size (Cr)", "Rating", "Rating (Full)", "Yield (%)", "As of",
-    "Holders", "Listing Status", "Sector", "Issuer Type", "Mode of Issue",
+    "Src", "Holders", "Listing Status", "Sector", "Issuer Type", "Mode of Issue",
 ]
 export_df = filtered[[c for c in EXPORT_COLS if c in filtered.columns]].copy()
 export_df["Issue Date"]    = export_df["Issue Date"].dt.strftime("%d/%m/%Y")
@@ -1284,7 +1440,8 @@ st.caption(
     "Yield / As of / Holders come from the fortnightly debt-scheme portfolio "
     "disclosures of HDFC, SBI, ICICI Prudential, Aditya Birla SL, Axis, Nippon, "
     "Kotak and UTI mutual funds; yields are as per each fund's valuation "
-    "methodology and are not exchange-traded levels."
+    "methodology and are not exchange-traded levels. Where Src shows BSE/NSE, "
+    "the yield is a recent exchange trade that post-dates the MF mark."
 )
 
 # ---- Contact footer ----
