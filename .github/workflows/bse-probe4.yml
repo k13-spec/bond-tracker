@@ -1,0 +1,35 @@
+name: BSE API probe 4 (temporary)
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Endpoint map and live tests
+        run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+          curl -s -m 40 -A "$UA" "https://www.bseindia.com/assets/includenew/js/main-SDCU5NAX.js" -o main.js
+          {
+            echo "## full API endpoint dictionary entries (debt/trade related)"
+            echo '```'
+            grep -oE '[A-Za-z0-9]+:"/[A-Za-z0-9_]+/w[^"]*"' main.js | sort -u | grep -iE 'debt|trade|repo|icdm|otc|corp' | head -60
+            echo '```'
+            echo "## context around Tradereport (600 chars)"
+            echo '```'
+            grep -oE '.{100}Tradereport.{500}' main.js | head -4
+            echo '```'
+            echo "## context around trade_repository component api call"
+            echo '```'
+            grep -oE '.{50}(getTradeRep|TradeRepository|traderepo)[A-Za-z]*.{300}' main.js | head -6
+            echo '```'
+            echo "## live endpoint tests (fmdt/todt convention)"
+            for EP in \
+              "https://api.bseindia.com/BseIndiaAPI/api/Mkt_Debt_Tradereport_Turnover_beta/w?fmdt=01/07/2026&todt=07/07/2026" \
+              "https://api.bseindia.com/BseIndiaAPI/api/TradeReportScriptWise/w?fmdt=01/07/2026&todt=07/07/2026" ; do
+              echo "### $EP"
+              echo '```'
+              curl -s -m 40 -A "$UA" -H "Referer: https://www.bseindia.com/" -H "Accept: application/json" "$EP" | head -c 1200
+              echo; echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
