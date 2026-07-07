@@ -1,0 +1,40 @@
+name: BSE API probe 3 (temporary)
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: BFS chunks and dump all API endpoints
+        run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+          BASE="https://www.bseindia.com/assets/includenew/js"
+          mkdir -p js
+          echo "main-SDCU5NAX.js" > queue.txt
+          : > seen.txt; : > all_apis.txt; : > matches.md
+          i=0
+          while [ -s queue.txt ] && [ $i -lt 150 ]; do
+            F=$(head -1 queue.txt); sed -i '1d' queue.txt
+            grep -qx "$F" seen.txt && continue
+            echo "$F" >> seen.txt
+            i=$((i+1))
+            curl -s -m 30 -A "$UA" "$BASE/$F" -o "js/$F" || continue
+            grep -oE '[A-Za-z0-9_-]+-[A-Z0-9]{8}\.js' "js/$F" | sort -u >> queue.txt
+            grep -oE '(api\.bseindia\.com/)?BseIndiaAPI/api/[A-Za-z0-9_]+/w[^"'\''`)]{0,100}' "js/$F" | sed "s|^|$F : |" >> all_apis.txt
+            if grep -qE 'trade_repository|TradeRepo|Yeild%|Yeild \(|WAY\)|Exhange' "js/$F"; then
+              { echo "### MATCH: $F"
+                echo '```'
+                grep -oE '.{80}(trade_repository|TradeRepo|Yeild|Exhange).{160}' "js/$F" | head -8
+                echo '```'; } >> matches.md
+            fi
+          done
+          {
+            echo "## scanned: $i files"
+            echo "## ALL BseIndiaAPI endpoints found"
+            echo '```'
+            sort -u all_apis.txt | head -120
+            echo '```'
+            echo "## keyword matches"
+            cat matches.md
+          } >> "$GITHUB_STEP_SUMMARY"
