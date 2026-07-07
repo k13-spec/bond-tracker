@@ -1,0 +1,98 @@
+# On-demand refresh of BSE/NSE secondary-market trade yields.
+#
+# Triggered from the dashboard's "⟳ Refresh Secondary Trades" button
+# (workflow_dispatch via the GitHub API using the GH_WORKFLOW_TOKEN in
+# Streamlit secrets), or manually from this repo's Actions tab.
+#
+# Window: from the last refresh date recorded in data/secondary_meta.json
+# (with a 1-day overlap), or the last 30 days on first run — per the spec,
+# bonds without MF marks look back 30 days for trades.
+#
+# Pipeline:
+#   fetch_secondary_trades.py -> BSE Central Trade Repository API (BSE + NSE),
+#                                >= ₹1cr trades, best row per (ISIN, date)
+#   update_secondary.py       -> data/secondary_yields.csv (governing trade
+#                                per ISIN), data/secondary_yields_history.csv
+#                                (append-only, feeds the trendline), and
+#                                data/secondary_meta.json (last refresh shown
+#                                on the dashboard)
+#   commit + push             -> app picks it up within its 10-min cache
+
+name: Secondary trades refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_date:
+        description: "Override start date YYYY-MM-DD (blank = last refresh / 30 days back)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests pandas
+
+      - name: Compute fetch window
+        id: window
+        env:
+          FROM_INPUT: ${{ github.event.inputs.from_date }}
+        run: |
+          TO=$(TZ=Asia/Kolkata date +%Y-%m-%d)
+          if [ -n "$FROM_INPUT" ]; then
+            FROM="$FROM_INPUT"
+          else
+            FROM=$(python -c "
+          import json, datetime, pathlib
+          p = pathlib.Path('data/secondary_meta.json')
+          if p.exists():
+              d = datetime.datetime.fromisoformat(json.loads(p.read_text())['last_refresh']).date()
+              d = d - datetime.timedelta(days=1)   # 1-day overlap
+          else:
+              d = datetime.date.today() - datetime.timedelta(days=30)
+          print(d.isoformat())")
+          fi
+          echo "from=$FROM" >> "$GITHUB_OUTPUT"
+          echo "to=$TO"     >> "$GITHUB_OUTPUT"
+          echo "Window: $FROM -> $TO"
+
+      - name: Fetch trades
+        run: python fetch_secondary_trades.py "${{ steps.window.outputs.from }}" "${{ steps.window.outputs.to }}" trades_new.csv 2>&1 | tee fetch_log.txt
+
+      - name: Fold into latest + history + meta
+        run: python update_secondary.py trades_new.csv . 2>&1 | tee update_log.txt
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/secondary_yields.csv data/secondary_yields_history.csv data/secondary_meta.json
+          if git diff --cached --quiet; then
+            echo "No changes."
+            exit 0
+          fi
+          N=$(grep -oP 'wrote trades_new.csv: \K\d+' fetch_log.txt || echo "?")
+          git commit -m "Secondary trades refresh ${{ steps.window.outputs.from }} -> ${{ steps.window.outputs.to }} (${N} isin-date rows >= 1cr)"
+          git push
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Secondary trades refresh — ${{ steps.window.outputs.from }} -> ${{ steps.window.outputs.to }}"
+            echo '```'
+            cat fetch_log.txt update_log.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
