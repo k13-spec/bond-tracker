@@ -1159,13 +1159,16 @@ with st.sidebar:
     if st.button("⟳  Refresh Secondary Trades (BSE/NSE)", type="secondary",
                  use_container_width=True):
         try:
-            _gh_token = st.secrets.get("GH_WORKFLOW_TOKEN", "")
-        except Exception:
+            from gh_app_auth import get_installation_token
+            _gh_token = get_installation_token()
+            _gh_err = ""
+        except Exception as e:
             _gh_token = ""
+            _gh_err = str(e)
         if not _gh_token:
-            st.error("GH_WORKFLOW_TOKEN is not configured in Streamlit secrets. "
-                     "Add a GitHub token with Actions write access to the app's "
-                     "secrets to enable this button.")
+            st.error("Couldn't get a GitHub App token to start the refresh. "
+                     "Check that GH_APP_PRIVATE_KEY is set in Streamlit secrets. "
+                     f"({_gh_err})")
         else:
             try:
                 _resp = requests.post(
