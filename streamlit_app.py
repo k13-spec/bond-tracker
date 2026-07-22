@@ -491,9 +491,22 @@ RATING_GRADES = [
     "CCC+", "CCC", "CCC-", "CC", "C", "D",
     "A1+", "A1", "A2+", "A2", "A3", "A4",
 ]
+# Longest-first alternation + custom boundaries so "AA-" / "AA+" / "BBB-"
+# match as themselves instead of collapsing to "AA" / "BBB" (\b treats
+# +/- as a boundary, so the old pattern could never return modifier grades).
 GRADE_PATTERN = re.compile(
-    r"\b(" + "|".join(re.escape(g) for g in RATING_GRADES) + r")\b"
+    r"(?<![A-Za-z0-9])("
+    + "|".join(re.escape(g)
+               for g in sorted(RATING_GRADES, key=len, reverse=True))
+    + r")(?![A-Za-z0-9])"
 )
+
+# grade integer (ratings DB) -> long-term symbol, most reliable for cross-ref
+GRADE_INT2SYM = {
+    1: "AAA", 2: "AA+", 3: "AA", 4: "AA-", 5: "A+", 6: "A", 7: "A-",
+    8: "BBB+", 9: "BBB", 10: "BBB-", 11: "BB+", 12: "BB", 13: "BB-",
+    14: "B+", 15: "B", 16: "B-", 17: "CCC+", 18: "CCC", 19: "CCC-", 20: "D",
+}
 
 
 # ------------------------------------------------------------------ #
@@ -1144,7 +1157,10 @@ if _rt_lookup:
     for _issuer in df["Issuer"]:
         _rec = _rt_lookup.get(
             _normalize_co_rt(_issuer) if isinstance(_issuer, str) else "")
-        _sym = _primary_rating(_rec.get("rating")) if _rec else None
+        # Prefer the DB's parsed grade integer (exact, incl. +/- modifiers);
+        # fall back to parsing the rating string.
+        _sym = (GRADE_INT2SYM.get(_rec.get("grade"))
+                or _primary_rating(_rec.get("rating"))) if _rec else None
         _db_syms.append(_sym)
         _db_agencies.append((_rec.get("agency") or "").strip() if _rec else "")
     df["_db_rating"] = _db_syms
