@@ -839,8 +839,11 @@ _PSU_FRAGMENTS = [
 ]
 
 
-def _is_psu(name: str) -> bool:
-    n = (" " + (name or "").lower() + " ")
+def _is_psu(name) -> bool:
+    # NaN / None / non-string issuer names must not crash the filter
+    if not isinstance(name, str):
+        return False
+    n = (" " + name.lower() + " ")
     return any(f in n for f in _PSU_FRAGMENTS)
 
 
@@ -1069,7 +1072,8 @@ st.markdown(
             </div>
         </div>
         <div>
-            <a href="https://creditnexus.streamlit.app" target="_blank"
+            <a href="https://creditnexus.streamlit.app/" target="_blank"
+               rel="noopener noreferrer"
                style="font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;
                       color:#6366F1;background:#FFFFFF;border-radius:8px;
                       padding:7px 16px;text-decoration:none;white-space:nowrap;
@@ -1124,6 +1128,31 @@ if not _secondary.empty:
     df.loc[_override, "As of"] = df.loc[_override, "_sec_as_of"].dt.strftime("%d/%m/%Y")
     df.loc[_override, "Src"] = df.loc[_override, "_sec_src"]
     df = df.drop(columns=["_sec_yield", "_sec_as_of", "_sec_src"])
+
+# ------------------------------------------------------------------ #
+# Latest-rating cross-reference (ratings tool DB)
+# NSDL's Credit Rating field is as filed at issuance and often stale.
+# Where the issuer is found in the ratings DB (creditnexus ratings
+# tracker), Rating shows the current rating and Rating Src the agency;
+# otherwise it falls back to the NSDL at-issuance rating.
+# ------------------------------------------------------------------ #
+df["Rating (NSDL)"] = df["Rating"]
+df["Rating Src"] = "NSDL"
+_rt_lookup = _load_ratings_lookup()
+if _rt_lookup:
+    _db_syms, _db_agencies = [], []
+    for _issuer in df["Issuer"]:
+        _rec = _rt_lookup.get(
+            _normalize_co_rt(_issuer) if isinstance(_issuer, str) else "")
+        _sym = _primary_rating(_rec.get("rating")) if _rec else None
+        _db_syms.append(_sym)
+        _db_agencies.append((_rec.get("agency") or "").strip() if _rec else "")
+    df["_db_rating"] = _db_syms
+    _has_db = df["_db_rating"].notna()
+    df.loc[_has_db, "Rating"] = df.loc[_has_db, "_db_rating"]
+    df["_db_agency"] = _db_agencies
+    df.loc[_has_db, "Rating Src"] = df.loc[_has_db, "_db_agency"]
+    df = df.drop(columns=["_db_rating", "_db_agency"])
 
 # Stats row
 today = date.today()
@@ -1225,6 +1254,17 @@ with st.sidebar:
     )
     selected_grade_set = grade_options[grade_choice]
 
+    exact_ratings = st.multiselect(
+        "Exact Ratings (tick to include only these)",
+        options=RATING_GRADES,
+        default=[],
+        placeholder="e.g. AA-",
+        help="Show only bonds whose current rating is one of the ticked "
+             "grades (e.g. tick just AA-). Overrides Minimum Rating. "
+             "Ratings are cross-referenced against the ratings tracker DB "
+             "where the issuer is covered; otherwise the NSDL rating is used.",
+    )
+
     st.divider()
 
     # ---- MF holdings ----
@@ -1292,13 +1332,6 @@ with st.sidebar:
     ], label_visibility="collapsed")
     sort_asc = st.radio("Order", ["Ascending", "Descending"], horizontal=True) == "Ascending"
 
-    st.divider()
-    # ---- Ratings DB ----
-    show_db_ratings = st.checkbox(
-        "Enrich with ratings DB",
-        value=False,
-        help="Adds DB Rating column from the ratings tool. Downloads ~2 MB; cached 1h.",
-    )
 
 # ------------------------------------------------------------------ #
 # Apply filters
@@ -1316,13 +1349,15 @@ if search_query:
 if selected_years:
     filtered = filtered[filtered["Maturity Date"].dt.year.isin(selected_years)]
 
-# Rating filter
-if selected_grade_set is not None:
+# Rating filter — exact ticked grades take precedence over the preset
+if exact_ratings:
+    filtered = filtered[filtered["Rating"].isin(set(exact_ratings))]
+elif selected_grade_set is not None:
     grade_set = set(selected_grade_set)
     filtered = filtered[filtered["Rating"].isin(grade_set)]
 
 # MF-held only
-if only_mf_held:
+if only_mf_held and "Holders" in filtered.columns:
     filtered = filtered[filtered["Holders"].notna()]
 
 # Issue size
@@ -1337,9 +1372,9 @@ if listed_choice == "Listed only":
 elif listed_choice == "Unlisted only":
     filtered = filtered[filtered["Listing Status"] == "Unlisted"]
 
-# PSU exclude
+# PSU exclude (astype(bool) keeps the mask boolean even on empty results)
 if exclude_psu:
-    filtered = filtered[~filtered["Issuer"].apply(_is_psu)]
+    filtered = filtered[~filtered["Issuer"].apply(_is_psu).astype(bool)]
 
 # Instrument type
 if selected_types:
@@ -1362,9 +1397,9 @@ filtered = filtered.sort_values(sort_col, ascending=sort_asc, na_position="last"
 st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
 
 DISPLAY_COLS = [
-    "ISIN", "Issuer", "Type", "Coupon Rate (%)", "Issue Date", "Maturity Date",
-    "Days to Maturity", "Issue Size (Cr)", "Rating", "Yield (%)", "As of",
-    "Src", "Holders", "Listing Status", "Sector"
+    "ISIN", "Issuer", "Coupon Rate (%)", "Issue Date", "Maturity Date",
+    "Days to Maturity", "Issue Size (Cr)", "Rating", "Rating Src",
+    "Yield (%)", "As of", "Src", "Holders", "Sector"
 ]
 display_df = filtered[DISPLAY_COLS].copy()
 # ISIN becomes a link into the yield-history view (?isin=...)
@@ -1377,15 +1412,6 @@ display_df["Issue Size (Cr)"] = display_df["Issue Size (Cr)"].apply(
     lambda x: f"{x:,.2f}" if pd.notna(x) else "—"
 )
 
-if show_db_ratings:
-    _rt_lookup = _load_ratings_lookup()
-    if _rt_lookup:
-        display_df["DB Rating"] = filtered["Issuer"].apply(
-            lambda x: _rt_lookup.get(_normalize_co_rt(str(x)), {}).get("rating", "")
-        ).values
-        display_df["DB Grade"] = filtered["Issuer"].apply(
-            lambda x: _rt_lookup.get(_normalize_co_rt(str(x)), {}).get("grade")
-        ).values
 st.dataframe(
     display_df,
     use_container_width=True,
@@ -1399,7 +1425,10 @@ st.dataframe(
         "Issuer":         st.column_config.TextColumn(width="large"),
         "Days to Maturity": st.column_config.NumberColumn("Days Left", format="%d", width="small"),
         "Issue Size (Cr)": st.column_config.TextColumn("Size (Cr)", width="small"),
-        "Rating":         st.column_config.TextColumn(width="small"),
+        "Rating":         st.column_config.TextColumn(width="small",
+                                                      help="Current rating — from the ratings tracker DB where the issuer is covered, else NSDL at-issuance"),
+        "Rating Src":     st.column_config.TextColumn("Rating Src", width="small",
+                                                      help="Agency of the latest rating from the ratings tracker DB; NSDL = at-issuance rating from NSDL"),
         "Yield (%)":      st.column_config.NumberColumn("Yield (%)", format="%.2f", width="small",
                                                         help="YTM as marked in the latest MF fortnightly debt-scheme disclosure"),
         "As of":          st.column_config.TextColumn("As of", width="small",
@@ -1408,9 +1437,6 @@ st.dataframe(
                                                       help="Where the yield comes from: AMC name = MF valuation mark; BSE/NSE = actual exchange trade"),
         "Holders":        st.column_config.TextColumn("Holders", width="medium",
                                                       help="Mutual funds holding this bond (from fortnightly disclosures)"),
-        "Listing Status": st.column_config.TextColumn("Listing", width="small"),
-        "DB Rating":      st.column_config.TextColumn("DB Rating", width="small"),
-        "DB Grade":       st.column_config.NumberColumn("DB Grade", format="%d", width="small"),
         "Sector":         st.column_config.TextColumn(width="medium"),
     },
 )
@@ -1421,7 +1447,8 @@ st.dataframe(
 EXPORT_COLS = [
     "ISIN", "Issuer", "Type", "Series", "Coupon Rate (%)", "Coupon Type",
     "Coupon Freq", "Issue Date", "Maturity Date", "Days to Maturity",
-    "Issue Size (Cr)", "Rating", "Rating (Full)", "Yield (%)", "As of",
+    "Issue Size (Cr)", "Rating", "Rating Src", "Rating (NSDL)", "Rating (Full)",
+    "Yield (%)", "As of",
     "Src", "Holders", "Listing Status", "Sector", "Issuer Type", "Mode of Issue",
 ]
 export_df = filtered[[c for c in EXPORT_COLS if c in filtered.columns]].copy()
@@ -1438,8 +1465,9 @@ st.download_button(
 )
 
 st.caption(
-    "⚠️ Listing Status is derived from Mode of Issue (Public Issue → Listed; "
-    "Private Placement → Unlisted). For definitive listing status, check BSE/NSE. "
+    "⚠️ Rating shows the latest rating from the ratings tracker DB (Rating Src "
+    "= agency) where the issuer is covered; otherwise the NSDL at-issuance "
+    "rating (Rating Src = NSDL), which can be dated. "
     "Yield / As of / Holders come from the fortnightly debt-scheme portfolio "
     "disclosures of HDFC, SBI, ICICI Prudential, Aditya Birla SL, Axis, Nippon, "
     "Kotak and UTI mutual funds; yields are as per each fund's valuation "
