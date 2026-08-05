@@ -5,8 +5,11 @@
 # late (a catch-up run commits nothing if the data is already complete).
 #
 # Pipeline per run:
-#   fetch_disclosures.py  -> downloads the 8 AMCs' fortnightly disclosures
-#   build_mf_yields.py    -> parses them into a snapshot CSV
+#   fetch_disclosures.py  -> downloads the 9 AMCs' fortnightly disclosures
+#                            (HDFC, SBI, ICICI Pru, ABSL, Axis, Nippon,
+#                             Kotak, UTI, Tata)
+#   build_mf_yields.py    -> parses them into a snapshot CSV (yield, holders
+#                            incl. per-AMC market value in INR crore)
 #   update_yields.py      -> data/mf_yields.csv (latest, shown in the table)
 #                            data/mf_yields_history.csv (append-only, feeds
 #                            the per-ISIN yield trendline)

@@ -4,8 +4,9 @@ India Bond Maturity Tracker — Streamlit app.
 Data is pulled directly from the NSDL public API and cached for 24 hours.
 MF yield enrichment (Yield / As of / Holders) comes from data/mf_yields.csv
 in this repo, built fortnightly from the debt-scheme portfolio disclosures
-of HDFC, SBI, ICICI Prudential, Aditya Birla SL, Axis, Nippon, Kotak and
-UTI mutual funds (see build_mf_yields.py). Where a more recent BSE/NSE
+of HDFC, SBI, ICICI Prudential, Aditya Birla SL, Axis, Nippon, Kotak, UTI
+and Tata mutual funds (see build_mf_yields.py). Holders shows each AMC's
+market value in INR crore, e.g. "HDFC (50), SBI (100)". Where a more recent BSE/NSE
 secondary-market trade exists (data/secondary_yields.csv, built by the
 secondary-trades-refresh workflow), it overrides the MF mark.
 
@@ -526,15 +527,52 @@ def _parse_date(s) -> str | None:
 
 
 def _parse_size_cr(raw) -> float | None:
+    """NSDL 'Issue Size(in Rs.)' -> INR crore.
+
+    The field is rupees, but a small tail of filings uses other units
+    (units/lakhs/crores) with no way to tell reliably. Values below
+    Rs. 1 lakh are treated as unreliable and dropped rather than shown
+    as absurd crore figures (the old heuristic let e.g. a raw 500000
+    through as "500,000 Cr", wrecking any size-based sort).
+    """
     if raw is None or raw == "":
         return None
     try:
         val = float(str(raw).replace(",", "").strip())
-        if val == 0:
+        if val < 1e5:          # < Rs. 1 lakh: zero, garbage, or unknown unit
             return None
-        return round(val / 1e7, 2) if val > 1e6 else round(val, 2)
+        return round(val / 1e7, 2)
     except (ValueError, TypeError):
         return None
+
+
+_COUPON_ZERO_RE = re.compile(r"^(zero\s*coupon|zero|nil)$", re.I)
+
+
+def _parse_coupon(raw) -> tuple[float | None, str]:
+    """NSDL 'Coupon Rate (%)' -> (numeric rate or None, detail text).
+
+    NSDL mixes plain numbers with text: zero-coupon markers, floating-rate
+    formulas ("SBI BASE RATE+300 BASIS POINT", "RESET RATE"), and
+    market-linked debenture underlyings ("NIFTY 50 INDEX LINKED", "SENSEX").
+    The numeric column stays sortable; the text moves to Coupon Detail.
+    """
+    if not raw:
+        return None, ""
+    s = str(raw).strip()
+    num = s.rstrip("%").strip().replace(",", "")
+    try:
+        val = float(num)
+        if val == 0:
+            return 0.0, "Zero Coupon"
+        return round(val, 4), ""
+    except ValueError:
+        pass
+    if _COUPON_ZERO_RE.match(s):
+        return 0.0, "Zero Coupon"
+    if s.upper() in ("N.A", "N.A.", "NA", "-"):
+        return None, ""
+    return None, re.sub(r"\s+", " ", s)
 
 
 def _primary_rating(raw: str | None) -> str | None:
@@ -604,8 +642,7 @@ def load_bonds() -> pd.DataFrame:
         issue_date    = _parse_date(g(row, "Date of Allotment"))
         raw_rating    = g(row, "Credit Rating")
         mode_of_issue = g(row, "Mode of Issue") or ""
-        coupon_raw    = g(row, "Coupon Rate (%)") or ""
-        coupon_val    = coupon_raw.rstrip("%").strip()
+        coupon_val, coupon_detail = _parse_coupon(g(row, "Coupon Rate (%)"))
 
         records.append({
             "ISIN":            isin,
@@ -615,6 +652,7 @@ def load_bonds() -> pd.DataFrame:
             "Description":     g(row, "Security Description"),
             "Mode of Issue":   mode_of_issue,
             "Coupon Rate (%)": coupon_val,
+            "Coupon Detail":   coupon_detail,
             "Coupon Type":     g(row, "Coupon Type"),
             "Coupon Freq":     g(row, "Frequency of Interest Payment"),
             "Issue Date":      issue_date,
@@ -631,8 +669,22 @@ def load_bonds() -> pd.DataFrame:
     if not df.empty:
         df["Issue Date"]    = pd.to_datetime(df["Issue Date"], errors="coerce")
         df["Maturity Date"] = pd.to_datetime(df["Maturity Date"], errors="coerce")
+        df["Coupon Rate (%)"] = pd.to_numeric(df["Coupon Rate (%)"], errors="coerce")
+        df["Issue Size (Cr)"] = pd.to_numeric(df["Issue Size (Cr)"], errors="coerce")
         today_dt = pd.Timestamp(date.today())
         df["Days to Maturity"] = (df["Maturity Date"] - today_dt).dt.days.astype("Int64")
+        # Renewable-energy issuers (power producers, not their lenders) get
+        # their own sub-sector under Infrastructure — NSDL lumps them into
+        # Electric Utilities / Energy / Power etc.
+        _renew = (df["Issuer"].str.contains(_RENEW_RE, na=False)
+                  & (df["Sector"].map(_sector_group) != "Financial Institutions"))
+        df.loc[_renew, "Sector"] = "Renewable Energy"
+        # Effective PSU flag: NSDL's Type of Issuer-Ownership field where
+        # filled, else name-based detection (the field is blank for ~10%
+        # of rows and NSDL sometimes misfiles well-known PSUs).
+        _own_psu = df["Issuer Type"].fillna("").str.startswith("Public Sector")
+        df["PSU"] = (_own_psu | df["Issuer"].apply(_is_psu)).map(
+            {True: "PSU", False: "Non-PSU"})
     return df
 
 
@@ -801,8 +853,10 @@ _SECTOR_GROUPS = {
     ],
     "Infrastructure": [
         "Infrastructure", "Civil Construction",
+        "Renewable Energy",   # derived sub-sector (issuer-name based)
+        "Energy", "Power", "Other Utilities",
         "Electric Utilities", "Electricity Generation", "Power Trading",
-        "Power - Transmission", "Multi Utilities", "Utilities",
+        "Power - Transmission", "Power - Distribution", "Multi Utilities", "Utilities",
         "Oil Exploration & Production", "Refineries & Marketing",
         "Oil Storage & Transportation", "Gas Transmission/ Marketing",
         "LPG/CNG/PN G/LNG Supplier", "Industrial Gas",
@@ -815,22 +869,40 @@ _SECTOR_GROUPS = {
         "Telecom - Equipment & Accessories", "Telecom - Infrastructure",
         "Other Telecom Services",
     ],
-    "Financial": [
+    "Financial Institutions": [
         "Finance", "Financial Institution",
-        "Non-Banking Financial Company (NBFC)", "Housing Finance Company",
+        # NSDL sector strings arrive with a "(...)" suffix that the app
+        # strips for display — both variants must be listed, otherwise
+        # e.g. NBFCs fall through to the default (Corporate) bucket.
+        "Non-Banking Financial Company (NBFC)", "Non-Banking Financial Company",
+        "NBFC", "Housing Finance Company",
         "Private Sector Bank", "Public Sector Bank", "Other Bank",
         "Asset Management Company", "Investment Company",
         "Life Insurance", "General Insurance", "Other Insurance Companies",
-        "Insurance Distributors", "Financial Technology (Fintech)",
+        "Insurance Distributors",
+        "Financial Technology (Fintech)", "Financial Technology",
         "Stockbroking & Allied",
         "Depositories, Clearing Houses and Other Intermediaries",
         "Other Capital Market related Services", "Other Financial Services",
     ],
 }
 
+# Renewable-energy issuer detection (power producers / IPPs). Lenders to the
+# sector (IREDA, cleantech NBFCs) stay under Financial Institutions — the
+# override in load_bonds() skips issuers whose NSDL sector is financial.
+_RENEW_RE = re.compile(
+    r"renewab|solar|\bwind\b|windpower|wind power|windfarm|green energy|"
+    r"green power|greenko|clean ?energy|cleantech|clean ?max|hydro ?power|"
+    r"hydroelectric|photovolta|\brenew\b|suzlon|inox wind|avaada|"
+    r"azure power|juniper green|serentica|ayana renewable|amp energy|"
+    r"fourth partner|o2 power|radiance renew|virescent|adani green|"
+    r"tata power renewable|continuum green|vena energy|sael\b",
+    re.I,
+)
+
 _PSU_FRAGMENTS = [
     "ntpc ", "bhel ", " sail ", "ongc", "iocl", "gail ",
-    "nalco", "nmdc", "nhpc", "npcil", "powergrid",
+    "nalco", "nmdc", "nhpc", "npcil", "powergrid", "power grid",
     "irfc", "nhai ", "hudco", "sidbi", "nabard",
     "coal india", "indian oil", "bharat petroleum",
     "hindustan petroleum", "oil and natural gas",
@@ -842,13 +914,31 @@ _PSU_FRAGMENTS = [
     "state bank of india", "punjab national bank",
     "bank of baroda", "bank of india", "bank of maharashtra",
     "canara bank", "union bank of india", "central bank of india",
-    "indian bank ", "uco bank",
+    "indian bank ", "uco bank", "jammu and kashmir bank",
     "life insurance corporation",
     "power finance corp", "rural electrification corp",
     "housing and urban development", "national bank for agriculture",
     "export import bank", "exim bank",
     "rec limited", "pfc limited",
     "food corporation of india", "oil india", "mrpl", "bpcl", "hpcl",
+    # verified against NSDL's Type of Issuer-Ownership field, 2026-08-05
+    "indian railway finance", "india infrastructure finance",
+    "indian renewable energy development", "nuclear power corporation",
+    "national housing bank", "financing infrastructure and development",
+    "thdc ", "mtnl", "bsnl", "bharat sanchar", "mahanagar telephone",
+    "pnb housing", "ircon", "rites ", "nbcc ", "moil ",
+    "mazagon dock", "garden reach ship", "goa shipyard",
+    "engineers india", "rashtriya chemicals", "national fertilizers",
+    "seci ", "solar energy corporation",
+    # state-government entities: discoms/transcos, state FIs, civic bodies
+    "power corporation", "energy corporation", "electricity board",
+    "state electricity", "rajya vidyut", "prasaran nigam", "vidyut nigam",
+    "power distribution company", "power generation co",
+    "municipal corporation", "nagar nigam",
+    "metropolitan development authority", "capital region development",
+    "infrastructure development board", "state beverages",
+    "kerala financial corporation", "kerala infrastructure investment",
+    "mineral development corporation", "industrial infrastructure corporation",
 ]
 
 
@@ -903,7 +993,8 @@ def _load_ratings_lookup() -> dict:
 
 
 def _sector_checkbox_panel(available_sectors: list) -> list:
-    grouped: dict[str, list] = {"Corporate": [], "Infrastructure": [], "Financial": []}
+    grouped: dict[str, list] = {"Corporate": [], "Infrastructure": [],
+                                "Financial Institutions": []}
     for s in available_sectors:
         grouped[_sector_group(s)].append(s)
 
@@ -929,7 +1020,7 @@ def _sector_checkbox_panel(available_sectors: list) -> list:
         st.rerun()
 
     selected = []
-    for grp in ["Corporate", "Infrastructure", "Financial"]:
+    for grp in ["Corporate", "Infrastructure", "Financial Institutions"]:
         members = grouped.get(grp, [])
         if not members:
             continue
@@ -1288,7 +1379,7 @@ with st.sidebar:
         "Only MF-held bonds",
         help="Show only bonds appearing in the latest fortnightly debt-scheme "
              "disclosures of HDFC / SBI / ICICI Pru / Aditya Birla / Axis / "
-             "Nippon / Kotak / UTI MF",
+             "Nippon / Kotak / UTI / Tata MF",
     )
 
     st.divider()
@@ -1314,7 +1405,9 @@ with st.sidebar:
     # ---- PSU / sovereign ----
     exclude_psu = st.checkbox(
         "Exclude PSU / Sovereign",
-        help="Hide government-owned / public sector issuers (name-based detection)",
+        help="Hide government-owned / public sector issuers. Uses NSDL's "
+             "Type of Issuer-Ownership field, backed up by name-based "
+             "detection where NSDL leaves it blank or misfiles it.",
     )
 
     st.divider()
@@ -1343,8 +1436,8 @@ with st.sidebar:
     # ---- Sort ----
     st.markdown("**Sort**")
     sort_col = st.selectbox("Sort by", [
-        "Maturity Date", "Issue Date", "Issue Size (Cr)", "Rating", "Issuer",
-        "Days to Maturity", "Yield (%)"
+        "Maturity Date", "Issue Date", "Issue Size (Cr)", "Coupon Rate (%)",
+        "Rating", "Issuer", "Days to Maturity", "Yield (%)"
     ], label_visibility="collapsed")
     sort_asc = st.radio("Order", ["Ascending", "Descending"], horizontal=True) == "Ascending"
 
@@ -1388,9 +1481,9 @@ if listed_choice == "Listed only":
 elif listed_choice == "Unlisted only":
     filtered = filtered[filtered["Listing Status"] == "Unlisted"]
 
-# PSU exclude (astype(bool) keeps the mask boolean even on empty results)
+# PSU exclude — effective flag from NSDL ownership field + name heuristic
 if exclude_psu:
-    filtered = filtered[~filtered["Issuer"].apply(_is_psu).astype(bool)]
+    filtered = filtered[filtered["PSU"] != "PSU"]
 
 # Instrument type
 if selected_types:
@@ -1413,20 +1506,22 @@ filtered = filtered.sort_values(sort_col, ascending=sort_asc, na_position="last"
 st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
 
 DISPLAY_COLS = [
-    "ISIN", "Issuer", "Coupon Rate (%)", "Issue Date", "Maturity Date",
-    "Days to Maturity", "Issue Size (Cr)", "Rating", "Rating Src",
-    "Yield (%)", "As of", "Src", "Holders", "Sector"
+    "ISIN", "Issuer", "Coupon Rate (%)", "Coupon Detail", "Issue Date",
+    "Maturity Date", "Days to Maturity", "Issue Size (Cr)", "Rating",
+    "Rating Src", "Yield (%)", "As of", "Src", "Holders", "Sector"
 ]
 display_df = filtered[DISPLAY_COLS].copy()
 # ISIN becomes a link into the yield-history view (?isin=...)
 display_df["ISIN"] = display_df["ISIN"].apply(
     lambda i: f"{APP_BASE_URL}/?isin={i}"
 )
-display_df["Issue Date"]    = display_df["Issue Date"].dt.strftime("%d/%m/%Y")
-display_df["Maturity Date"] = display_df["Maturity Date"].dt.strftime("%d/%m/%Y")
-display_df["Issue Size (Cr)"] = display_df["Issue Size (Cr)"].apply(
-    lambda x: f"{x:,.2f}" if pd.notna(x) else "—"
-)
+# Dates and sizes keep their native dtypes (datetime64 / float) so that
+# clicking a column header sorts chronologically / numerically — the old
+# code formatted them into dd/mm/yyyy and "1,234.00" strings, which made
+# header-click sorting lexicographic and effectively random.
+display_df["As of"] = pd.to_datetime(display_df["As of"],
+                                     format="%d/%m/%Y", errors="coerce")
+display_df["Holders"] = display_df["Holders"].str.replace("; ", ", ", regex=False)
 
 st.dataframe(
     display_df,
@@ -1439,20 +1534,27 @@ st.dataframe(
                               display_text=r"isin=(.*)$",
                               help="Click to see this bond's MF yield trendline over time"),
         "Issuer":         st.column_config.TextColumn(width="large"),
+        "Coupon Rate (%)": st.column_config.NumberColumn("Coupon (%)", format="%.2f", width="small",
+                                                         help="Fixed coupon rate. Blank for floating-rate / market-linked bonds — see Coupon Detail. 0.00 = zero-coupon."),
+        "Coupon Detail":  st.column_config.TextColumn("Coupon Detail", width="small",
+                                                      help="Zero Coupon, floating-rate formula, or market-linked underlying (from NSDL's coupon field)"),
+        "Issue Date":     st.column_config.DateColumn("Issue Date", format="DD/MM/YYYY", width="small"),
+        "Maturity Date":  st.column_config.DateColumn("Maturity Date", format="DD/MM/YYYY", width="small"),
         "Days to Maturity": st.column_config.NumberColumn("Days Left", format="%d", width="small"),
-        "Issue Size (Cr)": st.column_config.TextColumn("Size (Cr)", width="small"),
+        "Issue Size (Cr)": st.column_config.NumberColumn("Size (Cr)", format="%.2f", width="small",
+                                                         help="Issue size in INR crore (from NSDL, filed in rupees). Blank where NSDL's figure is unreliable."),
         "Rating":         st.column_config.TextColumn(width="small",
                                                       help="Current rating — from the ratings tracker DB where the issuer is covered, else NSDL at-issuance"),
         "Rating Src":     st.column_config.TextColumn("Rating Src", width="small",
                                                       help="Agency of the latest rating from the ratings tracker DB; NSDL = at-issuance rating from NSDL"),
         "Yield (%)":      st.column_config.NumberColumn("Yield (%)", format="%.2f", width="small",
                                                         help="YTM as marked in the latest MF fortnightly debt-scheme disclosure"),
-        "As of":          st.column_config.TextColumn("As of", width="small",
+        "As of":          st.column_config.DateColumn("As of", format="DD/MM/YYYY", width="small",
                                                       help="Date of the MF disclosure or BSE/NSE trade the yield is taken from"),
         "Src":            st.column_config.TextColumn("Src", width="small",
                                                       help="Where the yield comes from: AMC name = MF valuation mark; BSE/NSE = actual exchange trade"),
         "Holders":        st.column_config.TextColumn("Holders", width="medium",
-                                                      help="Mutual funds holding this bond (from fortnightly disclosures)"),
+                                                      help="Mutual funds holding this bond, with each AMC's total market value in INR crore, e.g. HDFC (50), SBI (100)"),
         "Sector":         st.column_config.TextColumn(width="medium"),
     },
 )
@@ -1461,11 +1563,12 @@ st.dataframe(
 # CSV export
 # ------------------------------------------------------------------ #
 EXPORT_COLS = [
-    "ISIN", "Issuer", "Type", "Series", "Coupon Rate (%)", "Coupon Type",
-    "Coupon Freq", "Issue Date", "Maturity Date", "Days to Maturity",
+    "ISIN", "Issuer", "Type", "Series", "Coupon Rate (%)", "Coupon Detail",
+    "Coupon Type", "Coupon Freq", "Issue Date", "Maturity Date", "Days to Maturity",
     "Issue Size (Cr)", "Rating", "Rating Src", "Rating (NSDL)", "Rating (Full)",
     "Yield (%)", "As of",
-    "Src", "Holders", "Listing Status", "Sector", "Issuer Type", "Mode of Issue",
+    "Src", "Holders", "Listing Status", "Sector", "PSU", "Issuer Type",
+    "Mode of Issue",
 ]
 export_df = filtered[[c for c in EXPORT_COLS if c in filtered.columns]].copy()
 export_df["Issue Date"]    = export_df["Issue Date"].dt.strftime("%d/%m/%Y")
@@ -1486,9 +1589,11 @@ st.caption(
     "rating (Rating Src = NSDL), which can be dated. "
     "Yield / As of / Holders come from the fortnightly debt-scheme portfolio "
     "disclosures of HDFC, SBI, ICICI Prudential, Aditya Birla SL, Axis, Nippon, "
-    "Kotak and UTI mutual funds; yields are as per each fund's valuation "
-    "methodology and are not exchange-traded levels. Where Src shows BSE/NSE, "
-    "the yield is a recent exchange trade that post-dates the MF mark."
+    "Kotak, UTI and Tata mutual funds; the figure in brackets after each holder "
+    "is that AMC's total market value across its schemes in INR crore. Yields "
+    "are as per each fund's valuation methodology and are not exchange-traded "
+    "levels. Where Src shows BSE/NSE, the yield is a recent exchange trade "
+    "that post-dates the MF mark."
 )
 
 # ---- Contact footer ----

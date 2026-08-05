@@ -1,19 +1,32 @@
 """
 Download the latest fortnightly debt-scheme portfolio disclosures from
-8 AMCs into the folder layout expected by build_mf_yields.py:
+9 AMCs into the folder layout expected by build_mf_yields.py:
 
     <out>/hdfc/*.xlsx   <out>/sbi/sbi.xlsx     <out>/icici/*.xlsx (unzipped)
-    <out>/absl/*.xlsx   <out>/axis/axis.xlsx   <out>/nippon/nippon.xls
+    <out>/absl/*.xls*   <out>/axis/axis.xlsx   <out>/nippon/nippon.xls
     <out>/kotak/kotak.xlsx                     <out>/uti/Sebi Exposure*.xlsx
+    <out>/tata/tata.xlsx
 
 Usage:  python fetch_disclosures.py 2026-06-30 [out_dir]
         (date = the fortnight-end being fetched: 15th or month-end)
 
-NOTE: run this on a normal machine (it needs open internet access to the
-AMC websites). Some AMCs (Axis) don't expose a stable URL — for those the
-script calls the same JSON APIs their own websites use.
+Per-AMC quirks (re-verified 2026-08-05):
+  - HDFC: one xlsx per debt scheme, predictable S3 URLs; update HDFC_SCHEMES
+    when schemes launch/merge/mature.
+  - ABSL: filename convention changes almost every fortnight — several
+    variants are probed (zip and xls).
+  - Axis: CMS API (POST /cms/get-scheme-documents) with a static public
+    Bearer token returns the exact document URL; legacy numeric-path probe
+    kept as fallback.
+  - Kotak: their listing API sits behind Radware bot-protection, but the
+    S3 file host is open and the path is predictable — hit it directly.
+  - UTI: JSON API needs browser-ish Accept/Referer headers and can 502
+    transiently; retried.
+  - Tata: Drupal CMS, predictable "Fortnightly Portfolio as on ..." URL in
+    the publish-month folder (file for the 31st lands in next month's folder).
 """
 import io
+import json
 import re
 import sys
 import time
@@ -26,7 +39,15 @@ import requests
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
 
-# HDFC publishes one xlsx per debt scheme. Scheme list as of Jun-2026;
+# Static public token baked into axismf.com's frontend bundle (captured
+# 2026-08-05); works without cookies. If Axis rotates it, re-capture from
+# the Authorization header of any /cms/ call on axismf.com.
+AXIS_CMS_TOKEN = ("c060dc4235de5fefc8fe5da8ef2b64d59fdf4f46c8ebeddb394a47daeac8c67c"
+                  "083d602ed9d4133d32b50ce33241fbedb6240c94cc801279292b3f301ae1ef6f"
+                  "713e38c38d778f9a7ec84bd4c094c0b5fa3cd8b3c5e9d5ae43b9a47ddcfe60b6"
+                  "339fe8395818d3f21ffaaaca455fe03e48b47a5079bf4a2eb86fece310b253ff")
+
+# HDFC publishes one xlsx per debt scheme. Scheme list as of Aug-2026;
 # update if HDFC launches/merges debt schemes.
 HDFC_SCHEMES = [
     "HDFC Ultra Short Term Fund", "HDFC Short Term Debt Fund",
@@ -42,8 +63,7 @@ HDFC_SCHEMES = [
     "HDFC Income Plus Arbitrage Omni FOF", "HDFC Income Plus Arbitrage Active FOF",
     "HDFC Income Fund", "HDFC Hybrid Debt Fund", "HDFC Gilt Fund",
     "HDFC FMP 2638D February 2023", "HDFC FMP 1876D March 2022",
-    "HDFC FMP 1861D March 2022", "HDFC FMP 1406D August 2022",
-    "HDFC FMP 1359D September 2022", "HDFC FMP 1269D March 2023",
+    "HDFC FMP 1861D March 2022", "HDFC FMP 1269D March 2023",
     "HDFC Floating Rate Debt Fund", "HDFC Dynamic Debt Fund",
     "HDFC Diversified Equity All Cap Active FOF",
     "HDFC CRISIL-IBX Financial Services 9-12 Months Debt Index Fund",
@@ -102,13 +122,13 @@ def fetch(d: date, out: Path):
     mm = f"{d.month:02d}"
     ordsfx = {1: "st", 2: "nd", 3: "rd", 21: "st", 22: "nd", 23: "rd", 31: "st",
               15: "th", 30: "th"}.get(day, "th")
+    # publish-month folders: same month, then next month (month-end files
+    # are usually uploaded in the first days of the following month)
+    nxt = date(d.year + (d.month == 12), d.month % 12 + 1, 1)
+    folders = [d.strftime("%Y-%m"), nxt.strftime("%Y-%m")]
 
     # ---- HDFC (per-scheme files) -------------------------------------
     print("HDFC…")
-    # files are uploaded early the following month, so folder = publish month
-    folders = [d.strftime("%Y-%m")]
-    nxt = date(d.year + (d.month == 12), d.month % 12 + 1, 1)
-    folders.append(nxt.strftime("%Y-%m"))
     for scheme in HDFC_SCHEMES:
         fname = f"{scheme} - {dd}-{mon_full}-{yyyy}.xlsx"
         urls = [f"https://files.hdfcfund.com/s3fs-public/{f}/{requests.utils.quote(fname)}"
@@ -137,25 +157,64 @@ def fetch(d: date, out: Path):
         print("  unzipped icici")
     else: print("  MISS", u)
 
-    # ---- Aditya Birla SL (zip with one consolidated xlsx) --------------
+    # ---- Aditya Birla SL (zip or xls; naming varies fortnight to
+    #      fortnight, so several conventions are probed) -----------------
     print("Aditya Birla…")
-    u = (f"https://mutualfund.adityabirlacapital.com/-/media/bsl/files/resources/"
-         f"fortnightly-portfolio/{yyyy}/sebi_fortnightly_portfolio_{dd}-{mon_full.lower()}-{yyyy}.zip")
-    content, _ = try_urls([u])
+    ddmmyy = f"{dd}{mm}{yy}"
+    names = [
+        f"sebi_fortnightly_portfolio_report_{ddmmyy}.zip",
+        f"sebifortnightlyportfolioreport{ddmmyy}.xls",
+        f"sebifortnightlyportfolioreport{ddmmyy}.xlsx",
+        f"sebi_fortnightly_portfolio_{dd}-{mon_full.lower()}-{yyyy}.zip",
+        f"sebi_fortnightly_portfolio_{dd}-{mon_abbr.lower()}-{yyyy}.zip",
+        f"sebi_fortnightly_portfolio-{dd}-{mon_full.lower()}-{yyyy}.zip",
+        f"sebi_fortnightly_portfolio_{dd}_{mon_abbr.lower()}-{yyyy}.zip",
+        f"abslmf_fortnightlydisclosure-{dd}-{mm}-{yy}.zip",
+    ]
+    urls = [f"https://mutualfund.adityabirlacapital.com/-/media/bsl/files/resources/"
+            f"fortnightly-portfolio/{yyyy}/{n}" for n in names]
+    content, matched = try_urls(urls)
     if content:
-        zipfile.ZipFile(io.BytesIO(content)).extractall(out / "absl")
-        print("  unzipped absl")
-    else: print("  MISS", u)
+        if content[:2] == b"PK" and matched.endswith(".zip"):
+            zipfile.ZipFile(io.BytesIO(content)).extractall(out / "absl")
+            print("  unzipped absl:", matched.rsplit("/", 1)[-1])
+        else:
+            ext = ".xlsx" if content[:2] == b"PK" else ".xls"
+            save(out / "absl" / f"absl{ext}", content)
+    else: print("  MISS ABSL — check mutualfund.adityabirlacapital.com → "
+                "Forms & Downloads → Portfolio → Fortnightly for the new filename")
 
-    # ---- Axis (consolidated xlsx; numeric URL discovered via fiber/DOM;
-    #      no stable pattern — try the JSON-less fallback of last known path
-    #      then give up with a message) -----------------------------------
+    # ---- Axis (CMS API returns the exact document URL) -----------------
     print("Axis…")
-    u = f"https://www.axismf.com/1/5/464/2383/3698/4349/Fortnightly_Portfolio_{dd}_{mm}_{yyyy}.xlsx"
-    content, _ = try_urls([u])
-    if content: save(out / "axis" / "axis.xlsx", content)
-    else: print("  MISS Axis — download manually from axismf.com → Statutory "
-                "Disclosures → 8. Portfolios → Fortnightly")
+    axis_content = None
+    try:
+        r = requests.post(
+            "https://www.axismf.com/cms/get-scheme-documents",
+            headers={**UA, "Content-Type": "application/json",
+                     "Authorization": f"Bearer {AXIS_CMS_TOKEN}",
+                     "Referer": "https://www.axismf.com/statutory-disclosures"},
+            json={"sdType": "yearMonthSchemeDocs", "sdID": "sdFortnightlyPortfolio",
+                  "year": yyyy, "month": mon_full, "schemeCode": "Consolidated"},
+            timeout=60)
+        r.raise_for_status()
+        docs = (r.json().get("data") or {}).get("documentList") or []
+        want = f"{dd}-{mm}-{yyyy}"
+        doc = next((x for x in docs
+                    if want in (x.get("documentName") or "")
+                    or f"_{dd}_{mm}_{yyyy}" in (x.get("docuementURL") or "")), None)
+        if doc and doc.get("docuementURL"):
+            axis_content = get(doc["docuementURL"]).content
+    except Exception as e:
+        print("  Axis CMS API failed:", e)
+    if not axis_content:
+        # legacy fallback: last-known numeric path (changes over time)
+        u = f"https://www.axismf.com/1/5/464/2383/3698/4524/Fortnightly_Portfolio_{dd}_{mm}_{yyyy}.xlsx"
+        axis_content, _ = try_urls([u])
+    if axis_content and len(axis_content) > 5000:
+        save(out / "axis" / "axis.xlsx", axis_content)
+    else:
+        print("  MISS Axis — download manually from axismf.com > Statutory "
+              "Disclosures > 8. Portfolios > Fortnightly")
 
     # ---- Nippon (consolidated xls; naming varies: 30-Jun-26 / 15-June-26) --
     print("Nippon…")
@@ -167,37 +226,62 @@ def fetch(d: date, out: Path):
     if content: save(out / "nippon" / "nippon.xls", content)
     else: print("  MISS Nippon", urls)
 
-    # ---- Kotak (API lists content path on a public S3 host) -------------
+    # ---- Kotak (their listing API is bot-guarded, but the S3 file host
+    #      is open and the path is predictable) --------------------------
     print("Kotak…")
-    try:
-        js = get("https://www.kotakmf.com/api/kotakapi/forms/user/v1/getsubheaderList/417").json()
-        want = f"Fortnightly Portfolio as on {mon_full} {d.day}, {yyyy}"
-        item = next((i for i in js.get("subHeaderList", [])
-                     if i.get("subHeaderTitle", "").strip() == want), None)
-        if item:
-            u = "https://vatseelabs-s3.kotakmf.com/" + requests.utils.quote(item["content"])
-            save(out / "kotak" / "kotak.xlsx", get(u).content)
-        else:
-            print("  MISS Kotak:", want)
-    except Exception as e:
-        print("  Kotak API error:", e)
+    kpath = (f"FAD/Portfolios/Fortnightly-Portfolio-as-on-{mon_full}-{d.day},-{yyyy}/"
+             f"FortnightlyPortfolio{mon_full}{d.day}{yyyy}.xlsx")
+    u = "https://vatseelabs-s3.kotakmf.com/" + requests.utils.quote(kpath)
+    content, _ = try_urls([u])
+    if content and content[:2] == b"PK":
+        save(out / "kotak" / "kotak.xlsx", content)
+    else:
+        print("  MISS Kotak:", u)
 
-    # ---- UTI (API returns CDN URL of consolidated zip) ------------------
+    # ---- UTI (API returns CDN URL of consolidated zip; needs browser-ish
+    #      headers and can 502 transiently) ------------------------------
     print("UTI…")
-    try:
-        half = "1-15" if day == 15 else f"16-{day}"
-        js = get("https://www.utimf.com/api/get-consolidate-debt-portfolio-disclosure",
-                 params={"year": yyyy, "month": f"{half} {mon_full}"}).json()
-        rows = js.get("rows", [])
-        if rows:
-            u = rows[0]["url"]
-            content = get(u).content
+    uti_headers = {**UA, "Accept": "application/json",
+                   "Referer": "https://www.utimf.com/forms-and-downloads/portfolio-disclosure"}
+    half = "1-15" if day == 15 else f"16-{day}"
+    rows = []
+    for attempt in range(3):
+        try:
+            r = requests.get(
+                "https://www.utimf.com/api/get-consolidate-debt-portfolio-disclosure",
+                params={"year": yyyy, "month": f"{half} {mon_full}"},
+                headers=uti_headers, timeout=60)
+            r.raise_for_status()
+            rows = json.loads(r.text).get("rows", [])
+            break
+        except Exception as e:
+            print(f"  UTI API attempt {attempt + 1} failed: {e}")
+            time.sleep(10 * (attempt + 1))
+    if rows:
+        try:
+            content = get(rows[0]["url"]).content
             zipfile.ZipFile(io.BytesIO(content)).extractall(out / "uti")
             print("  unzipped uti")
-        else:
-            print("  MISS UTI: no rows for", half, mon_full)
-    except Exception as e:
-        print("  UTI API error:", e)
+        except Exception as e:
+            print("  MISS UTI (download/unzip):", e)
+    else:
+        print("  MISS UTI: no rows for", half, mon_full)
+
+    # ---- Tata (Drupal CMS; one consolidated workbook) -------------------
+    print("Tata…")
+    tname = f"Fortnightly Portfolio as on {day}{ordsfx} {mon_full} {yyyy}"
+    urls = []
+    for f in reversed(folders):          # try next-month folder first
+        for suffix in (".xlsx", ".xls", " (1).xlsx", "_0.xlsx"):
+            urls.append(f"https://betacms.tatamutualfund.com/system/files/{f}/"
+                        f"{requests.utils.quote(tname + suffix)}")
+    content, matched = try_urls(urls)
+    if content:
+        ext = ".xlsx" if content[:2] == b"PK" else ".xls"
+        save(out / "tata" / f"tata{ext}", content)
+    else:
+        print("  MISS Tata — check tatamutualfund.com > Schemes related > "
+              "Portfolio > Fortnightly")
 
 
 if __name__ == "__main__":

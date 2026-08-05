@@ -1,15 +1,19 @@
 """
 Build mf_yields.csv from MF fortnightly debt-scheme portfolio disclosures.
 
-Input: downloaded disclosure workbooks from 8 AMCs (see FILES below).
+Input: downloaded disclosure workbooks from 9 AMCs (see FILES below).
 Output: mf_yields.csv with columns: isin, yield, as_of, holders, source
 
 Merge logic (additive, AMC priority order):
   - Yield + source come from the FIRST AMC (in priority order) that discloses the ISIN.
-  - Every AMC that holds the ISIN is appended to holders.
+  - Every AMC that holds the ISIN is appended to holders, together with its
+    total market value across all its schemes, in whole INR crore:
+    "HDFC (50); SBI (100)". AMCs whose sheet had no parseable market value
+    appear without the parenthetical amount.
 
 Yield normalization: sheets that store yield as a decimal fraction
 (e.g. 0.073 = 7.3%) are detected via the sheet median and scaled x100.
+Market values are disclosed in Rs. lakhs by every AMC; 1 crore = 100 lakhs.
 """
 import re
 import statistics
@@ -25,13 +29,17 @@ YTC_RE = re.compile(r"call|ytc", re.I)
 ISIN_HDR_RE = re.compile(r"^\s*isin", re.I)
 RATING_HDR_RE = re.compile(r"rating", re.I)
 NAME_HDR_RE = re.compile(r"name of|company/issuer|instrument", re.I)
+# "Market/ Fair Value (Rs. in Lacs.)" / "Market value\n(Rs. in Lakhs)" /
+# "Exposure/Market Value(Rs.Lakh)" / "Market Value (Rs.in Lacs)" /
+# "MARKET-VALUE" / "MKT VAL(Rs. Lacs)" — all disclosed in lakhs
+MV_HDR_RE = re.compile(r"(market|mkt)[\s\S]{0,20}val", re.I)
 
 SKIP_SHEETS = re.compile(r"^(index|derivative|deriv)", re.I)
 
 
 def find_header(cells):
-    """Return (isin_col, yield_col, rating_col, name_col) or None."""
-    isin_col = yield_col = rating_col = name_col = None
+    """Return (isin_col, yield_col, rating_col, name_col, mv_col) or None."""
+    isin_col = yield_col = rating_col = name_col = mv_col = None
     for j, c in enumerate(cells):
         if c is None:
             continue
@@ -44,8 +52,10 @@ def find_header(cells):
             rating_col = j
         if name_col is None and NAME_HDR_RE.search(s) and not ISIN_HDR_RE.match(s):
             name_col = j
+        if mv_col is None and MV_HDR_RE.search(s):
+            mv_col = j
     if isin_col is not None and yield_col is not None:
-        return isin_col, yield_col, rating_col, name_col
+        return isin_col, yield_col, rating_col, name_col, mv_col
     return None
 
 
@@ -64,9 +74,23 @@ def parse_yield(v):
     return y
 
 
+def parse_mv_lakhs(v):
+    """Market/fair value cell -> float lakhs (None if not parseable)."""
+    if v is None:
+        return None
+    s = str(v).strip().replace(",", "")
+    if not s or s in ("-", "NA", "N.A.", "NIL"):
+        return None
+    try:
+        mv = float(s)
+    except ValueError:
+        return None
+    return mv if mv > 0 else None
+
+
 def parse_rows(rows_iter):
-    """Yield (isin, yield_raw, rating, name) from a sheet; header re-detected
-    whenever encountered (handles UTI's one-big-sheet layout)."""
+    """Yield (isin, yield_raw, rating, name, mv_lakhs) from a sheet; header
+    re-detected whenever encountered (handles UTI's one-big-sheet layout)."""
     cols = None
     for row in rows_iter:
         hdr = find_header(row)
@@ -75,7 +99,7 @@ def parse_rows(rows_iter):
             continue
         if cols is None:
             continue
-        ic, yc, rc, nc = cols
+        ic, yc, rc, nc, mc = cols
         if ic >= len(row):
             continue
         isin = row[ic]
@@ -84,23 +108,24 @@ def parse_rows(rows_iter):
         y = parse_yield(row[yc]) if yc < len(row) else None
         rating = str(row[rc]).strip() if rc is not None and rc < len(row) and row[rc] else ""
         name = str(row[nc]).strip() if nc is not None and nc < len(row) and row[nc] else ""
-        yield str(isin).strip(), y, rating, name
+        mv = parse_mv_lakhs(row[mc]) if mc is not None and mc < len(row) else None
+        yield str(isin).strip(), y, rating, name, mv
 
 
 def normalize_sheet_yields(records):
-    """records: list of (isin,y,rating,name). Scale x100 if fraction-style."""
+    """records: list of (isin,y,rating,name,mv). Scale x100 if fraction-style."""
     ys = [r[1] for r in records if r[1] is not None]
     if not ys:
         return records
     med = statistics.median(ys)
     if med < 1:  # stored as decimal fraction
-        records = [(i, (y * 100 if y is not None and y < 1.5 else y), r, n)
-                   for i, y, r, n in records]
+        records = [(i, (y * 100 if y is not None and y < 1.5 else y), r, n, m)
+                   for i, y, r, n, m in records]
     out = []
-    for i, y, r, n in records:
+    for i, y, r, n, m in records:
         if y is not None and not (0 < y <= 60):
             y = None
-        out.append((i, y, r, n))
+        out.append((i, y, r, n, m))
     return out
 
 
@@ -135,30 +160,40 @@ def parse_any(path):
     return parse_xls(p) if p.lower().endswith(".xls") else parse_xlsx(p)
 
 
+def fmt_holders(holder_order, amounts_lakhs):
+    """['HDFC','SBI'], {'HDFC': 5010.2} -> 'HDFC (50); SBI'  (whole crores)."""
+    parts = []
+    for amc in holder_order:
+        lakhs = amounts_lakhs.get(amc)
+        if lakhs:
+            parts.append(f"{amc} ({round(lakhs / 100):,})")
+        else:
+            parts.append(amc)
+    return "; ".join(parts)
+
+
 def build(files_by_amc, as_of_by_amc, out_csv):
     """files_by_amc: ordered dict {amc_name: [paths]} in priority order."""
     merged = {}   # isin -> dict
     for amc, paths in files_by_amc.items():
-        seen_this_amc = set()
         for path in paths:
             try:
                 recs = parse_any(path)
             except Exception as e:
                 print(f"WARN: {amc}: failed to parse {path}: {e}", file=sys.stderr)
                 continue
-            for isin, y, rating, name in recs:
+            for isin, y, rating, name, mv in recs:
                 entry = merged.get(isin)
                 if entry is None:
                     entry = merged[isin] = {
                         "isin": isin, "yield": None, "as_of": None,
-                        "holders": [], "source": None,
+                        "holders": [], "amounts": {}, "source": None,
                         "mf_rating": rating, "name": name,
                     }
-                if amc not in entry["holders"] and isin not in seen_this_amc:
+                if amc not in entry["holders"]:
                     entry["holders"].append(amc)
-                    seen_this_amc.add(isin)
-                elif amc not in entry["holders"]:
-                    entry["holders"].append(amc)
+                if mv:
+                    entry["amounts"][amc] = entry["amounts"].get(amc, 0.0) + mv
                 if entry["yield"] is None and y is not None:
                     entry["yield"] = round(y, 4)
                     entry["as_of"] = as_of_by_amc[amc]
@@ -166,7 +201,8 @@ def build(files_by_amc, as_of_by_amc, out_csv):
         print(f"{amc}: cumulative ISINs {len(merged)}")
     df = pd.DataFrame(
         [{"isin": e["isin"], "yield": e["yield"], "as_of": e["as_of"],
-          "holders": "; ".join(e["holders"]), "source": e["source"],
+          "holders": fmt_holders(e["holders"], e["amounts"]),
+          "source": e["source"],
           "mf_rating": e["mf_rating"], "instrument_name": e["name"]}
          for e in merged.values()])
     df = df.sort_values("isin")
@@ -190,11 +226,12 @@ if __name__ == "__main__":
         "HDFC":          sorted((base / "hdfc").glob("*.xlsx")),
         "SBI":           [base / "sbi" / "sbi.xlsx"],
         "ICICI Pru":     sorted((base / "icici").glob("*.xlsx")),
-        "Aditya Birla":  sorted((base / "absl").glob("*.xlsx")),
+        "Aditya Birla":  sorted((base / "absl").glob("*.xls*")),
         "Axis":          [base / "axis" / "axis.xlsx"],
         "Nippon":        [base / "nippon" / "nippon.xls"],
         "Kotak":         [base / "kotak" / "kotak.xlsx"],
         "UTI":           sorted((base / "uti").glob("Sebi Exposure*.xls*")),
+        "Tata":          sorted((base / "tata").glob("tata.xls*")),
     }
     as_of = {k: AS_OF for k in files}
     build(files, as_of, base / "mf_yields.csv")
