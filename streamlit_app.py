@@ -439,6 +439,22 @@ p, li { font-family: var(--font) !important; }
     box-shadow: var(--shadow-sm) !important;
     font-family: var(--font) !important;
 }
+
+/* ═══════════════ MATERIAL ICON GLYPHS ═══════════════
+   Streamlit renders expander arrows / widget icons via the Material Symbols
+   ligature font. The DM Sans overrides above must NOT apply to them, or the
+   ligature text ("keyboard_arrow_right", …) renders as literal characters
+   overlapping the labels. */
+[data-testid="stIconMaterial"],
+span[data-testid="stIconMaterial"],
+[data-testid="stExpanderToggleIcon"],
+span[class*="material-symbols"],
+i[class*="material-symbols"] {
+    font-family: "Material Symbols Rounded" !important;
+    font-weight: normal !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+}
 </style>
 """
 
@@ -985,8 +1001,27 @@ def _load_ratings_lookup() -> dict:
                     "grade":   int(row["grade"]) if pd.notna(row.get("grade")) else None,
                     "agency":  str(row.get("agency", "") or ""),
                     "outlook": str(row.get("outlook", "") or ""),
+                    "date":    str(row.get("rating_date", "") or ""),
                 }
         return lookup
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_prefix_map() -> dict:
+    """ISIN issuer-prefix (first 7 chars) -> ratings-DB company name.
+
+    Built by ratings-tool/build_isin_map.py from NSDL issuer codes — turns the
+    fuzzy name join into an exact ISIN lookup. Cached 1 h; empty dict if the
+    map isn't published yet.
+    """
+    url = ("https://raw.githubusercontent.com/k13-spec/ratings-tool"
+           "/master/data/issuer_prefix_map.csv")
+    try:
+        df = pd.read_csv(url)
+        return {str(p): str(c) for p, c in
+                zip(df["isin_prefix"], df["company_name"])}
     except Exception:
         return {}
 
@@ -1242,24 +1277,45 @@ if not _secondary.empty:
 # ------------------------------------------------------------------ #
 df["Rating (NSDL)"] = df["Rating"]
 df["Rating Src"] = "NSDL"
+df["Rated On"] = pd.NaT
 _rt_lookup = _load_ratings_lookup()
 if _rt_lookup:
-    _db_syms, _db_agencies = [], []
-    for _issuer in df["Issuer"]:
-        _rec = _rt_lookup.get(
-            _normalize_co_rt(_issuer) if isinstance(_issuer, str) else "")
+    _pfx_map = _load_prefix_map()
+    _db_syms, _db_agencies, _db_dates = [], [], []
+    for _isin, _issuer in zip(df["ISIN"], df["Issuer"]):
+        # 1) exact join via the ISIN issuer-prefix map (immune to name quirks)
+        _rec = None
+        _cname = _pfx_map.get(str(_isin)[:7])
+        if _cname:
+            _rec = _rt_lookup.get(_normalize_co_rt(_cname))
+        # 2) fall back to the normalized-name join
+        if _rec is None:
+            _rec = _rt_lookup.get(
+                _normalize_co_rt(_issuer) if isinstance(_issuer, str) else "")
         # Prefer the DB's parsed grade integer (exact, incl. +/- modifiers);
         # fall back to parsing the rating string.
         _sym = (GRADE_INT2SYM.get(_rec.get("grade"))
                 or _primary_rating(_rec.get("rating"))) if _rec else None
         _db_syms.append(_sym)
         _db_agencies.append((_rec.get("agency") or "").strip() if _rec else "")
+        _db_dates.append((_rec.get("date") or "") if _rec else "")
     df["_db_rating"] = _db_syms
     _has_db = df["_db_rating"].notna()
     df.loc[_has_db, "Rating"] = df.loc[_has_db, "_db_rating"]
     df["_db_agency"] = _db_agencies
     df.loc[_has_db, "Rating Src"] = df.loc[_has_db, "_db_agency"]
+    _dates = pd.to_datetime(pd.Series(_db_dates, index=df.index),
+                            errors="coerce", format="mixed")
+    df.loc[_has_db, "Rated On"] = _dates[_has_db]
+    df["Rated On"] = pd.to_datetime(df["Rated On"], errors="coerce")
     df = df.drop(columns=["_db_rating", "_db_agency"])
+
+# Market-linked debentures: identified from the Coupon Detail text (index /
+# equity / commodity / G-sec linked underlyings, as filed with NSDL)
+_MLD_RE = re.compile(r"nifty|sensex|index|leap|gold|silver|mcx|basket|"
+                     r"underlying|linked|revenue of", re.I)
+df["MLD"] = df["Coupon Detail"].fillna("").str.contains(_MLD_RE).map(
+    {True: "Yes", False: "No"})
 
 # Stats row
 today = date.today()
@@ -1410,6 +1466,17 @@ with st.sidebar:
              "detection where NSDL leaves it blank or misfiles it.",
     )
 
+    # ---- Market-linked debentures ----
+    mld_choice = st.radio(
+        "Market-Linked Debentures",
+        options=["All", "Exclude MLDs", "Only MLDs"],
+        index=0,
+        horizontal=True,
+        help="MLDs are detected from the coupon text filed with NSDL "
+             "(Nifty/Sensex/index/gold/G-sec-linked underlyings — see the "
+             "Coupon Detail column).",
+    )
+
     st.divider()
 
     # ---- Instrument type ----
@@ -1485,6 +1552,12 @@ elif listed_choice == "Unlisted only":
 if exclude_psu:
     filtered = filtered[filtered["PSU"] != "PSU"]
 
+# Market-linked debentures
+if mld_choice == "Exclude MLDs":
+    filtered = filtered[filtered["MLD"] != "Yes"]
+elif mld_choice == "Only MLDs":
+    filtered = filtered[filtered["MLD"] == "Yes"]
+
 # Instrument type
 if selected_types:
     filtered = filtered[filtered["Type"].isin(selected_types)]
@@ -1508,7 +1581,7 @@ st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
 DISPLAY_COLS = [
     "ISIN", "Issuer", "Coupon Rate (%)", "Coupon Detail", "Issue Date",
     "Maturity Date", "Days to Maturity", "Issue Size (Cr)", "Rating",
-    "Rating Src", "Yield (%)", "As of", "Src", "Holders", "Sector"
+    "Rating Src", "Rated On", "Yield (%)", "As of", "Src", "Holders", "Sector"
 ]
 display_df = filtered[DISPLAY_COLS].copy()
 # ISIN becomes a link into the yield-history view (?isin=...)
@@ -1547,6 +1620,8 @@ st.dataframe(
                                                       help="Current rating — from the ratings tracker DB where the issuer is covered, else NSDL at-issuance"),
         "Rating Src":     st.column_config.TextColumn("Rating Src", width="small",
                                                       help="Agency of the latest rating from the ratings tracker DB; NSDL = at-issuance rating from NSDL"),
+        "Rated On":       st.column_config.DateColumn("Rated On", format="DD/MM/YYYY", width="small",
+                                                      help="Date of the rating shown — blank where the rating is NSDL's at-issuance value (date unknown, possibly years old)"),
         "Yield (%)":      st.column_config.NumberColumn("Yield (%)", format="%.2f", width="small",
                                                         help="YTM as marked in the latest MF fortnightly debt-scheme disclosure"),
         "As of":          st.column_config.DateColumn("As of", format="DD/MM/YYYY", width="small",
@@ -1564,15 +1639,17 @@ st.dataframe(
 # ------------------------------------------------------------------ #
 EXPORT_COLS = [
     "ISIN", "Issuer", "Type", "Series", "Coupon Rate (%)", "Coupon Detail",
-    "Coupon Type", "Coupon Freq", "Issue Date", "Maturity Date", "Days to Maturity",
-    "Issue Size (Cr)", "Rating", "Rating Src", "Rating (NSDL)", "Rating (Full)",
-    "Yield (%)", "As of",
+    "MLD", "Coupon Type", "Coupon Freq", "Issue Date", "Maturity Date",
+    "Days to Maturity",
+    "Issue Size (Cr)", "Rating", "Rating Src", "Rated On", "Rating (NSDL)",
+    "Rating (Full)", "Yield (%)", "As of",
     "Src", "Holders", "Listing Status", "Sector", "PSU", "Issuer Type",
     "Mode of Issue",
 ]
 export_df = filtered[[c for c in EXPORT_COLS if c in filtered.columns]].copy()
 export_df["Issue Date"]    = export_df["Issue Date"].dt.strftime("%d/%m/%Y")
 export_df["Maturity Date"] = export_df["Maturity Date"].dt.strftime("%d/%m/%Y")
+export_df["Rated On"]      = export_df["Rated On"].dt.strftime("%d/%m/%Y")
 
 csv_bytes = export_df.to_csv(index=False).encode("utf-8")
 st.download_button(
