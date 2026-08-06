@@ -1304,22 +1304,28 @@ if _rt_lookup:
     df.loc[_has_db, "Rating"] = df.loc[_has_db, "_db_rating"]
     df["_db_agency"] = _db_agencies
     df.loc[_has_db, "Rating Src"] = df.loc[_has_db, "_db_agency"]
-    # rating_date strings mix formats ("2026-01-29", "July 04, 2025", …);
-    # parse per unique value — pandas 3.x raises on mixed formats in a
-    # single vectorised to_datetime call (and format="mixed" is unreliable).
+    # rating_date strings mix formats ("2026-01-29", "July 04, 2025",
+    # "2026-03-30T00:00:00+05:30", …); parse per unique value and strip any
+    # timezone — pandas 3.x raises on mixed formats in one vectorised
+    # to_datetime call, and mixing tz-aware with naive Timestamps degrades
+    # the Series to object dtype, which .loc/assignment then rejects.
     _dcache = {}
     def _pdate(s):
         if not s or s in ("nan", "None"):
             return pd.NaT
         if s not in _dcache:
             try:
-                _dcache[s] = pd.to_datetime(s, errors="coerce")
+                _ts = pd.to_datetime(s, errors="coerce")
+                if _ts is not pd.NaT and getattr(_ts, "tzinfo", None) is not None:
+                    _ts = _ts.tz_localize(None)
+                _dcache[s] = _ts
             except (ValueError, TypeError):
                 _dcache[s] = pd.NaT
         return _dcache[s]
-    _dates = pd.Series([_pdate(d) for d in _db_dates], index=df.index)
-    df.loc[_has_db, "Rated On"] = _dates[_has_db]
-    df["Rated On"] = pd.to_datetime(df["Rated On"], errors="coerce")
+    _dates = pd.to_datetime(
+        pd.Series([_pdate(d) for d in _db_dates], index=df.index),
+        errors="coerce")
+    df["Rated On"] = _dates.where(_has_db)
     df = df.drop(columns=["_db_rating", "_db_agency"])
 
 # Market-linked debentures: identified from the Coupon Detail text (index /
