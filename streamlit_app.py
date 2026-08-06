@@ -1304,8 +1304,20 @@ if _rt_lookup:
     df.loc[_has_db, "Rating"] = df.loc[_has_db, "_db_rating"]
     df["_db_agency"] = _db_agencies
     df.loc[_has_db, "Rating Src"] = df.loc[_has_db, "_db_agency"]
-    _dates = pd.to_datetime(pd.Series(_db_dates, index=df.index),
-                            errors="coerce", format="mixed")
+    # rating_date strings mix formats ("2026-01-29", "July 04, 2025", …);
+    # parse per unique value — pandas 3.x raises on mixed formats in a
+    # single vectorised to_datetime call (and format="mixed" is unreliable).
+    _dcache = {}
+    def _pdate(s):
+        if not s or s in ("nan", "None"):
+            return pd.NaT
+        if s not in _dcache:
+            try:
+                _dcache[s] = pd.to_datetime(s, errors="coerce")
+            except (ValueError, TypeError):
+                _dcache[s] = pd.NaT
+        return _dcache[s]
+    _dates = pd.Series([_pdate(d) for d in _db_dates], index=df.index)
     df.loc[_has_db, "Rated On"] = _dates[_has_db]
     df["Rated On"] = pd.to_datetime(df["Rated On"], errors="coerce")
     df = df.drop(columns=["_db_rating", "_db_agency"])
