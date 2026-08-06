@@ -1,0 +1,65 @@
+# Quarterly investor-category holdings refresh.
+#
+# NSDL publishes a per-ISIN quarterly "Statement showing pattern of
+# Debenture/Bond Holders" (units held by investor category). fetch_holdings.py
+# pulls the LATEST quarter for every yield-covered bond (MF-held or
+# secondary-traded, ~2.2k ISINs — the full universe would be ~42k requests)
+# and writes data/holdings_mix.csv, which the app shows as "Holders Mix".
+#
+# Quarterly statements land ~3 weeks after quarter-end, so this runs on the
+# 25th of Jan/Apr/Jul/Oct (plus manual dispatch anytime). Each run is
+# best-effort: ISINs that fail keep their previous quarter's row.
+
+name: Holdings mix quarterly refresh
+
+on:
+  schedule:
+    - cron: "30 4 25 1,4,7,10 *"   # 10:00 IST, 25th of Jan/Apr/Jul/Oct
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: holdings-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests pandas openpyxl
+
+      - name: Fetch holdings
+        run: python fetch_holdings.py 2>&1 | tee holdings_log.txt
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/holdings_mix.csv
+          if git diff --cached --quiet; then
+            echo "No changes — nothing to commit."
+            exit 0
+          fi
+          N=$(grep -oP 'wrote .*: \K\d+' holdings_log.txt || echo "?")
+          git commit -m "Auto-refresh holdings mix (${N} ISINs)"
+          git push
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Holdings mix refresh"
+            echo '```'
+            tail -5 holdings_log.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

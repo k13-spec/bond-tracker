@@ -491,6 +491,10 @@ SECONDARY_META_URL = (
     "https://raw.githubusercontent.com/k13-spec/bond-tracker"
     "/main/data/secondary_meta.json"
 )
+HOLDINGS_MIX_URL = (
+    "https://raw.githubusercontent.com/k13-spec/bond-tracker"
+    "/main/data/holdings_mix.csv"
+)
 # GitHub Actions workflow dispatched by the sidebar "Refresh Secondary Trades" button
 GH_DISPATCH_URL = (
     "https://api.github.com/repos/k13-spec/bond-tracker"
@@ -563,6 +567,17 @@ def _parse_size_cr(raw) -> float | None:
 
 
 _COUPON_ZERO_RE = re.compile(r"^(zero\s*coupon|zero|nil)$", re.I)
+
+# NCD-only universe (2026-08-06): drop convertibles and preference-share-style
+# instruments. NSDL's Type of Instrument only says "Debentures"/"Bonds", so
+# detection is from the Security Description. Plain bonds (bank Tier-2, PSU,
+# deep-discount) are non-convertible debt and stay.
+_CONVERTIBLE_RE = re.compile(
+    r"\b(CCD|OCD|PCD|FCD)S?\b|COMPULSOR\w* CONVERT|OPTIONAL\w* CONVERT|"
+    r"PARTLY CONVERT|FULLY CONVERT", re.I)
+_PREF_RE = re.compile(
+    r"\bNCRPS\b|\bCRPS\b|\bOCRPS\b|\bRPS\b|\bNCPS\b|PREFERENCE SHARE|PREF\.? SHARE",
+    re.I)
 
 
 def _parse_coupon(raw) -> tuple[float | None, str]:
@@ -653,6 +668,12 @@ def load_bonds() -> pd.DataFrame:
 
         maturity_date = _parse_date(g(row, "Date of Redemption/Conversion"))
         if not maturity_date or maturity_date < today:
+            continue
+
+        # NCD-only universe: purge convertibles (CCD/OCD/PCD) and
+        # preference-share-style instruments
+        _desc = g(row, "Security Description") or ""
+        if _CONVERTIBLE_RE.search(_desc) or _PREF_RE.search(_desc):
             continue
 
         issue_date    = _parse_date(g(row, "Date of Allotment"))
@@ -790,6 +811,22 @@ def _load_secondary_history() -> pd.DataFrame:
     except Exception:
         return pd.DataFrame(
             columns=["isin", "yield", "as_of", "source", "trade_value_cr"])
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _load_holdings_mix() -> pd.DataFrame:
+    """Quarterly investor-category holdings mix per ISIN (NSDL statement).
+
+    Built by fetch_holdings.py (holdings-refresh workflow, quarterly) for
+    yield-covered bonds. Columns: isin, as_of, mix — e.g.
+    "MF 88%, Banks 8%, FPI 4%". Cached 6 h.
+    """
+    try:
+        h = pd.read_csv(HOLDINGS_MIX_URL)
+        h["isin"] = h["isin"].astype(str).str.strip()
+        return h.drop_duplicates(subset="isin", keep="first")
+    except Exception:
+        return pd.DataFrame(columns=["isin", "as_of", "mix"])
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -1304,28 +1341,10 @@ if _rt_lookup:
     df.loc[_has_db, "Rating"] = df.loc[_has_db, "_db_rating"]
     df["_db_agency"] = _db_agencies
     df.loc[_has_db, "Rating Src"] = df.loc[_has_db, "_db_agency"]
-    # rating_date strings mix formats ("2026-01-29", "July 04, 2025",
-    # "2026-03-30T00:00:00+05:30", …); parse per unique value and strip any
-    # timezone — pandas 3.x raises on mixed formats in one vectorised
-    # to_datetime call, and mixing tz-aware with naive Timestamps degrades
-    # the Series to object dtype, which .loc/assignment then rejects.
-    _dcache = {}
-    def _pdate(s):
-        if not s or s in ("nan", "None"):
-            return pd.NaT
-        if s not in _dcache:
-            try:
-                _ts = pd.to_datetime(s, errors="coerce")
-                if _ts is not pd.NaT and getattr(_ts, "tzinfo", None) is not None:
-                    _ts = _ts.tz_localize(None)
-                _dcache[s] = _ts
-            except (ValueError, TypeError):
-                _dcache[s] = pd.NaT
-        return _dcache[s]
-    _dates = pd.to_datetime(
-        pd.Series([_pdate(d) for d in _db_dates], index=df.index),
-        errors="coerce")
-    df["Rated On"] = _dates.where(_has_db)
+    _dates = pd.to_datetime(pd.Series(_db_dates, index=df.index),
+                            errors="coerce", format="mixed")
+    df.loc[_has_db, "Rated On"] = _dates[_has_db]
+    df["Rated On"] = pd.to_datetime(df["Rated On"], errors="coerce")
     df = df.drop(columns=["_db_rating", "_db_agency"])
 
 # Market-linked debentures: identified from the Coupon Detail text (index /
@@ -1334,6 +1353,17 @@ _MLD_RE = re.compile(r"nifty|sensex|index|leap|gold|silver|mcx|basket|"
                      r"underlying|linked|revenue of", re.I)
 df["MLD"] = df["Coupon Detail"].fillna("").str.contains(_MLD_RE).map(
     {True: "Yes", False: "No"})
+
+# Quarterly investor-category holdings mix (NSDL per-ISIN statement),
+# available for yield-covered bonds
+_hm = _load_holdings_mix()
+if not _hm.empty:
+    df = df.merge(_hm.rename(columns={"isin": "ISIN", "mix": "Holders Mix",
+                                      "as_of": "Holders Mix As Of"}),
+                  on="ISIN", how="left")
+else:
+    df["Holders Mix"] = None
+    df["Holders Mix As Of"] = None
 
 # Stats row
 today = date.today()
@@ -1599,7 +1629,8 @@ st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
 DISPLAY_COLS = [
     "ISIN", "Issuer", "Coupon Rate (%)", "Coupon Detail", "Issue Date",
     "Maturity Date", "Days to Maturity", "Issue Size (Cr)", "Rating",
-    "Rating Src", "Rated On", "Yield (%)", "As of", "Src", "Holders", "Sector"
+    "Rating Src", "Rated On", "Yield (%)", "As of", "Src", "Holders",
+    "Holders Mix", "Sector"
 ]
 display_df = filtered[DISPLAY_COLS].copy()
 # ISIN becomes a link into the yield-history view (?isin=...)
@@ -1648,6 +1679,8 @@ st.dataframe(
                                                       help="Where the yield comes from: AMC name = MF valuation mark; BSE/NSE = actual exchange trade"),
         "Holders":        st.column_config.TextColumn("Holders", width="medium",
                                                       help="Mutual funds holding this bond, with each AMC's total market value in INR crore, e.g. HDFC (50), SBI (100)"),
+        "Holders Mix":    st.column_config.TextColumn("Holders Mix (Qtr)", width="medium",
+                                                      help="Investor-category split of holders from NSDL's quarterly Statement of Debenture/Bond Holders (latest reported quarter-end, % of units; non-zero categories only). Fetched for yield-covered bonds."),
         "Sector":         st.column_config.TextColumn(width="medium"),
     },
 )
@@ -1661,7 +1694,8 @@ EXPORT_COLS = [
     "Days to Maturity",
     "Issue Size (Cr)", "Rating", "Rating Src", "Rated On", "Rating (NSDL)",
     "Rating (Full)", "Yield (%)", "As of",
-    "Src", "Holders", "Listing Status", "Sector", "PSU", "Issuer Type",
+    "Src", "Holders", "Holders Mix", "Holders Mix As Of", "Listing Status",
+    "Sector", "PSU", "Issuer Type",
     "Mode of Issue",
 ]
 export_df = filtered[[c for c in EXPORT_COLS if c in filtered.columns]].copy()
@@ -1679,7 +1713,9 @@ st.download_button(
 )
 
 st.caption(
-    "⚠️ Rating shows the latest rating from the ratings tracker DB (Rating Src "
+    "⚠️ Universe: non-convertible debentures and bonds only — convertibles "
+    "(CCD/OCD/PCD) and preference-share-style instruments are excluded. "
+    "Rating shows the latest rating from the ratings tracker DB (Rating Src "
     "= agency) where the issuer is covered; otherwise the NSDL at-issuance "
     "rating (Rating Src = NSDL), which can be dated. "
     "Yield / As of / Holders come from the fortnightly debt-scheme portfolio "
