@@ -6681,15 +6681,34 @@ INE800X07097,30/06/2026,MF 100%
 INE800X07105,30/06/2026,MF 100%
 INE801X07012,30/06/2026,Trusts 100%
 INE802J07019,30/06/2026,"Corporates 83%, Banks 17%"
+INE802J07027,30/06/2026,"Corporates 89%, Banks 11%"
 INE802J07035,30/06/2026,"Corporates 81%, MF 19%"
+INE802J07043,30/06/2026,"Insurance 40%, Banks 29%, PF/Pension 19%, Corporates 12%"
 INE804I08734,30/06/2026,"Corporates 78%, Trusts 21%, Individuals 0.5%"
+INE805O07020,30/06/2026,Corporates 100%
+INE805W08013,30/06/2026,"Corporates 74%, Foreign Companies 26%"
+INE806C07015,30/06/2026,AIF 100%
+INE806M08012,30/06/2026,Corporates 100%
+INE806N08010,30/06/2026,Foreign Companies 100%
+INE808H07010,30/06/2026,Insurance 100%
+INE809W07033,30/06/2026,Banks 100%
+INE812O07018,30/06/2026,Trusts 100%
 INE812V07013,30/06/2026,"Trusts 48%, Govt 33%, Banks 15%, MF 1.7%, FPI 1.7%, Corporates 0.8%"
+INE813H07150,30/06/2026,MF 100%
 INE813H07192,30/06/2026,MF 100%
+INE813H07200,30/06/2026,Insurance 100%
+INE813H07218,30/06/2026,Corporates 100%
 INE813H07226,30/06/2026,MF 100%
 INE813H07234,30/06/2026,MF 100%
 INE813H07242,30/06/2026,"MF 86%, Individuals 13%, Trusts 0.4%, Corporates 0.2%"
+INE813H07259,30/06/2026,MF 100%
+INE813H07267,30/06/2026,Insurance 100%
+INE813H07275,30/06/2026,"MF 75%, Insurance 25%"
 INE813H07283,30/06/2026,MF 100%
+INE813H07291,30/06/2026,Insurance 100%
 INE813H07309,30/06/2026,"MF 50%, Insurance 50%"
+INE813H07317,30/06/2026,Insurance 100%
+INE813H07325,30/06/2026,"MF 85%, FPI 15%"
 INE813H07333,30/06/2026,"MF 85%, FPI 15%"
 INE813H07341,30/06/2026,"MF 71%, Banks 29%"
 INE813H07366,30/06/2026,"MF 71%, Insurance 29%"
@@ -6700,12 +6719,50 @@ INE813H07416,30/06/2026,"Other FIs 70%, Insurance 15%, PF/Pension 12%, Banks 2.7
 INE813H07424,30/06/2026,"Insurance 51%, PF/Pension 43%, Corporates 4.4%, Trusts 1.2%"
 INE813H07432,30/06/2026,"MF 69%, Insurance 23%, PF/Pension 4.7%, NBFC 3.3%"
 INE813H07440,30/06/2026,"MF 75%, PF/Pension 10%, Insurance 8.5%, Banks 7%"
+INE813H07457,30/06/2026,"MF 46%, Insurance 40%, Other FIs 14%"
+INE813H07465,30/06/2026,"Insurance 70%, Other FIs 30%"
 INE814H07182,30/06/2026,"Banks 51%, Insurance 44%, PF/Pension 3.7%, Trusts 0.4%"
 INE814H07190,30/06/2026,"MF 93%, Banks 6.1%, Insurance 0.9%"
 INE814H07208,30/06/2026,"MF 87%, Banks 13%"
 INE814H07216,30/06/2026,"Banks 78%, Trusts 13%, Insurance 7.1%, Corporates 0.7%, Individuals 0.4%"
 INE814O07618,30/06/2026,"Corporates 93%, Individuals 6.8%"
+INE814X07049,30/06/2026,AIF 100%
+INE814X07056,30/06/2026,AIF 100%
+INE815Q07016,30/06/2026,"AIF 91%, Corporates 9.1%"
+INE815Q07024,30/06/2026,AIF 100%
+INE815Q07032,30/06/2026,AIF 100%
+INE815R07022,30/06/2026,"AIF 89%, Corporates 11%"
+INE816L07023,30/06/2026,AIF 100%
+INE816X07010,30/06/2026,Trusts 100%
+INE817X07018,30/06/2026,Trusts 100%
 INE818W08172,30/06/2026,Corporates 100%
+INE820K07019,30/06/2026,"Corporates 65%, Banks 33%, Insurance 2.4%"
+INE822V07012,30/06/2026,Corporates 100%
+INE823G07219,30/06/2026,Banks 100%
+INE825O08398,30/06/2026,Corporates 100%
+INE825O08406,30/06/2026,Corporates 100%
+INE825O08414,30/06/2026,Corporates 100%
+INE825O08422,30/06/2026,Corporates 100%
+INE825O08430,30/06/2026,Corporates 100%
+INE825O08448,30/06/2026,Corporates 100%
+INE825O08455,30/06/2026,Corporates 100%
+INE825O08463,30/06/2026,Corporates 100%
+INE825O08471,30/06/2026,Corporates 100%
+INE825O08489,30/06/2026,Corporates 100%
+INE825O08497,30/06/2026,Corporates 100%
+INE825O08505,30/06/2026,Corporates 100%
+INE825O08513,30/06/2026,Corporates 100%
+INE825O08521,30/06/2026,Corporates 100%
+INE825O08539,30/06/2026,Corporates 100%
+INE825O08547,30/06/2026,Corporates 100%
+INE825O08554,30/06/2026,Corporates 100%
+INE825O08562,30/06/2026,Corporates 100%
+INE825O08570,30/06/2026,Corporates 100%
+INE825O08588,30/06/2026,Corporates 100%
+INE827R08017,30/06/2026,Corporates 100%
+INE829X07013,30/06/2026,Banks 100%
+INE831A07017,30/06/2026,AIF 100%
+INE831A07025,30/06/2026,AIF 100%
 INE831R07318,30/06/2026,"MF 50%, Insurance 30%, Banks 20%"
 INE831R07367,30/06/2026,"Banks 72%, Trusts 23%, Corporates 5.7%"
 INE831R07391,30/06/2026,"Banks 53%, Insurance 32%, Trusts 11%, Corporates 5.3%"
@@ -6724,10 +6781,45 @@ INE831R07581,30/06/2026,"Banks 45%, MF 35%, Corporates 20%"
 INE831R07607,30/06/2026,"Banks 50%, MF 45%, Corporates 5%"
 INE831R07631,30/06/2026,"MF 50%, Insurance 33%, Corporates 17%"
 INE831R07656,30/06/2026,"Banks 43%, MF 40%, Insurance 16%, Trusts 1%"
+INE831X07019,30/06/2026,Corporates 100%
+INE831X08074,30/06/2026,VC 100%
+INE833M07059,30/06/2026,Corporates 100%
+INE834G08016,30/06/2026,Corporates 100%
+INE834U07019,30/06/2026,AIF 100%
+INE834U07027,30/06/2026,FPI 100%
+INE834X08029,30/06/2026,VC 100%
+INE835A07018,30/06/2026,AIF 100%
+INE835H07104,30/06/2026,"Banks 70%, Trusts 26%, Corporates 3.3%"
+INE835H07112,30/06/2026,"Banks 70%, Trusts 25%, Corporates 4.5%"
+INE835H07120,30/06/2026,"Banks 70%, Trusts 30%"
+INE835H07138,30/06/2026,"Banks 70%, Trusts 29%, Corporates 0.4%"
+INE835H07146,30/06/2026,"Banks 70%, Corporates 19%, Trusts 10%, Individuals 0.8%"
+INE835I08019,30/06/2026,FPI 100%
 INE836B07915,30/06/2026,"Individuals 74%, Corporates 26%, NRIs 0.3%"
 INE836B08319,30/06/2026,"Individuals 77%, Corporates 14%, Clearing members 8.7%, NRIs 0.2%"
 INE836B08327,30/06/2026,"Corporates 90%, Individuals 10%"
 INE836K07262,30/06/2026,"Individuals 75%, Corporates 18%, Banks 3.5%, Clearing members 3.1%, NRIs 0.4%"
+INE836P08012,30/06/2026,Corporates 100%
+INE838A07178,30/06/2026,"Individuals 99%, Corporates 0.7%"
+INE838A07186,30/06/2026,"Individuals 96%, Corporates 2.5%, Trusts 1%"
+INE838A07194,30/06/2026,"Corporates 56%, Individuals 44%"
+INE838A07202,30/06/2026,"Corporates 53%, Individuals 47%"
+INE838A07210,30/06/2026,Individuals 100%
+INE838A07228,30/06/2026,Individuals 100%
+INE838A07236,30/06/2026,"Individuals 78%, Corporates 20%, Clearing members 2%"
+INE838A07244,30/06/2026,Individuals 100%
+INE838A07251,30/06/2026,Corporates 100%
+INE838A07269,30/06/2026,"Corporates 92%, Individuals 7.6%"
+INE838A07277,30/06/2026,"Corporates 60%, Individuals 40%"
+INE838A07285,30/06/2026,"Individuals 72%, Trusts 25%, Corporates 3.3%, Clearing members 0.2%"
+INE838A07293,30/06/2026,Corporates 100%
+INE838A07301,30/06/2026,"Corporates 72%, Individuals 28%"
+INE838A07319,30/06/2026,Corporates 100%
+INE838A07335,30/06/2026,"Corporates 91%, Individuals 8.8%"
+INE838A07343,30/06/2026,"Corporates 97%, Individuals 2.6%"
+INE838A07350,30/06/2026,Corporates 100%
+INE838A07368,30/06/2026,Corporates 100%
+INE843S07063,30/06/2026,AIF 100%
 INE848E07385,30/06/2026,"Insurance 47%, Govt 31%, MF 16%, Banks 3.4%, Trusts 2.4%"
 INE848E07534,30/06/2026,"Individuals 50%, Corporates 42%, Clearing members 7.2%, NRIs 0.6%"
 INE848E07872,30/06/2026,"MF 44%, Insurance 36%, PF/Pension 16%, Banks 2.9%, Trusts 1.5%"
@@ -6751,11 +6843,21 @@ INE848E08540,30/06/2026,"Govt 98%, Corporates 1%, Trusts 0.5%"
 INE848E08557,30/06/2026,"Govt 98%, Corporates 1%, Trusts 0.5%"
 INE848E08565,30/06/2026,"Govt 98%, Corporates 1%, Trusts 0.5%"
 INE849K07091,30/06/2026,Corporates 100%
+INE850K08022,30/06/2026,FPI 100%
+INE850K08030,30/06/2026,FPI 100%
+INE850K08048,30/06/2026,FPI 100%
+INE850N08018,30/06/2026,Corporates 100%
+INE850S08132,30/06/2026,FPI 100%
 INE852O07139,30/06/2026,MF 100%
 INE852O07147,30/06/2026,MF 100%
 INE852O07154,30/06/2026,"Insurance 80%, MF 12%, Trusts 7.5%"
 INE852O07162,30/06/2026,"MF 93%, Corporates 6.7%"
+INE854B07041,30/06/2026,"Corporates 57%, AIF 43%"
+INE854B08023,30/06/2026,Corporates 100%
+INE855L08029,30/06/2026,AIF 100%
+INE857N08013,30/06/2026,VC 100%
 INE857Q07273,30/06/2026,"Corporates 41%, Insurance 37%, MF 13%, Trusts 6.5%, Banks 2.4%, Individuals 0.1%"
+INE858S07012,30/06/2026,AIF 100%
 INE859C07196,30/06/2026,"MF 66%, Trusts 17%, Corporates 12%, Individuals 5%"
 INE859C07212,30/06/2026,"Corporates 58%, Individuals 23%, Trusts 19%, NRIs 0.2%"
 INE859C07220,30/06/2026,"MF 29%, Individuals 28%, Banks 26%, Corporates 17%, AIF 0.4%"
@@ -6763,27 +6865,71 @@ INE859C07238,30/06/2026,"Banks 65%, NBFC 25%, Corporates 6.7%, Trusts 2.2%, Indi
 INE859C07246,30/06/2026,MF 100%
 INE859C07253,30/06/2026,"Corporates 89%, Insurance 8%, Banks 2.4%, Individuals 0.6%"
 INE859C08103,30/06/2026,"Corporates 57%, MF 43%"
+INE860H07FD4,30/06/2026,"Corporates 75%, Individuals 19%, Trusts 4.3%, AIF 1.2%"
 INE860H07GM3,30/06/2026,"Trusts 61%, Corporates 29%, Insurance 5.5%, Govt 4.4%, Individuals 0.1%"
+INE860H07GS0,30/06/2026,Insurance 100%
+INE860H07GU6,30/06/2026,"Trusts 80%, Corporates 17%, Individuals 3.1%"
+INE860H07GX0,30/06/2026,Insurance 100%
+INE860H07HE8,30/06/2026,"Corporates 67%, Govt 33%"
+INE860H07HK5,30/06/2026,Insurance 100%
+INE860H07HP4,30/06/2026,"Corporates 54%, Trusts 25%, PF/Pension 16%, Insurance 5.2%"
 INE860H07HQ2,30/06/2026,"Corporates 63%, Banks 27%, MF 4.8%, Insurance 4.8%"
+INE860H07ID8,30/06/2026,"Trusts 86%, PF/Pension 6%, Govt 3.3%, Corporates 2.6%, Banks 1.1%, Individuals 0.6%"
+INE860H07IF3,30/06/2026,Trusts 100%
 INE860H07IG1,30/06/2026,"Banks 31%, MF 30%, Corporates 26%, Insurance 10%, Trusts 3.1%"
 INE860H07II7,30/06/2026,"Banks 39%, Trusts 31%, Insurance 12%, MF 9.4%, Corporates 8.4%, Individuals 0.1%"
 INE860H07IJ5,30/06/2026,"Corporates 51%, MF 37%, Trusts 5.8%, Insurance 4.9%, Govt 1%"
+INE860H07IK3,30/06/2026,"Insurance 40%, Banks 28%, Trusts 18%, Corporates 11%, PF/Pension 2.5%, Individuals 0.1%"
 INE860H07IM9,30/06/2026,"Banks 75%, Corporates 13%, Trusts 6.2%, Insurance 5.7%, Individuals 0.1%"
 INE860H07IO5,30/06/2026,"Banks 52%, MF 18%, Corporates 17%, Trusts 9.1%, PF/Pension 2.1%, Govt 0.9%"
+INE860H07IP2,30/06/2026,"Individuals 86%, Trusts 11%, Corporates 3.1%, NRIs 0.2%"
 INE860H07IQ0,30/06/2026,"Corporates 56%, Individuals 24%, MF 18%, Banks 1.6%, NRIs 0.1%"
+INE860H07IR8,30/06/2026,"Individuals 93%, Corporates 6.9%, NRIs 0.3%"
+INE860H07IS6,30/06/2026,"Trusts 68%, Insurance 18%, Corporates 8.7%, Individuals 3.1%, Govt 1.3%, FPI 0.3%, others 0.1%"
+INE860H07IT4,30/06/2026,"Trusts 33%, Banks 22%, Insurance 21%, Individuals 18%, Corporates 6.8%"
+INE860H07IU2,30/06/2026,"Individuals 97%, Corporates 2.9%, NRIs 0.3%"
 INE860H07IW8,30/06/2026,"Corporates 36%, Trusts 26%, Banks 23%, Insurance 12%, Clearing members 1.1%, Individuals 0.6%, others 0.4%"
 INE860H07IX6,30/06/2026,"Corporates 67%, MF 33%"
 INE860H07IY4,30/06/2026,"Corporates 64%, Trusts 11%, MF 8.8%, Insurance 8.5%, Banks 7.6%, Individuals 0.1%"
+INE860H07IZ1,30/06/2026,"Trusts 76%, Corporates 21%, Individuals 3.4%, NBFC 0.1%"
 INE860H07JA2,30/06/2026,"Banks 48%, Trusts 33%, Insurance 15%, Corporates 3.8%"
+INE860H07JB0,30/06/2026,"Insurance 97%, Banks 3.3%"
 INE860H07JC8,30/06/2026,"Banks 34%, MF 32%, Corporates 20%, Insurance 10%, PF/Pension 3.2%, Trusts 0.5%"
+INE860H07JD6,30/06/2026,"Banks 51%, Trusts 17%, Corporates 13%, Insurance 10%, PF/Pension 8.2%, Other FIs 1.5%"
+INE860H07JE4,30/06/2026,"Banks 94%, PF/Pension 4.1%, Trusts 1.6%"
+INE860H08DV9,30/06/2026,"Trusts 66%, Corporates 26%, Insurance 7.6%, AIF 0.3%, Individuals 0.1%"
+INE860H08DW7,30/06/2026,"Trusts 84%, Insurance 7.6%, Individuals 4.3%, Corporates 3.8%, NRIs 0.5%"
+INE860H08DX5,30/06/2026,Trusts 100%
+INE860H08DY3,30/06/2026,"Trusts 86%, Insurance 12%, Corporates 2.1%, Individuals 0.1%, NRIs 0.1%"
 INE860H08DZ0,30/06/2026,"Trusts 97%, Corporates 1.9%, Individuals 1.1%"
+INE860H08EA1,30/06/2026,"Trusts 85%, Corporates 7.6%, PF/Pension 6%, Govt 0.8%, Individuals 0.8%"
+INE860H08EB9,30/06/2026,"Trusts 93%, Corporates 5.6%, Individuals 0.9%"
+INE860H08ED5,30/06/2026,"Trusts 92%, Corporates 7.3%, Individuals 0.4%"
+INE860H08EE3,30/06/2026,"Trusts 56%, Govt 40%, Banks 4.4%"
+INE860H08EG8,30/06/2026,"Trusts 67%, Corporates 17%, Govt 14%, Individuals 1.6%"
+INE860H08EI4,30/06/2026,"Trusts 74%, Insurance 12%, Govt 10%, Corporates 3%, Individuals 0.4%, Banks 0.2%"
 INE860H08EL8,30/06/2026,"Insurance 33%, Trusts 25%, Corporates 25%, MF 10%, Govt 5.9%, Individuals 0.9%"
+INE860H08EN4,30/06/2026,"Trusts 55%, Corporates 45%"
 INE861G08027,30/06/2026,"Govt 78%, Trusts 8.6%, Insurance 6.6%, MF 4.3%, FPI 1.6%, PF/Pension 0.9%, others 0.3%"
 INE861G08043,30/06/2026,"Trusts 56%, Insurance 26%, PF/Pension 8.1%, Corporates 4.7%, Banks 3%, MF 2.1%, others 0.1%"
 INE861G08050,30/06/2026,"Banks 37%, Trusts 24%, PF/Pension 18%, Insurance 14%, MF 2.4%, Govt 2.3%, others 3.1%"
 INE861G08068,30/06/2026,"Trusts 31%, Banks 30%, Insurance 16%, PF/Pension 16%, Corporates 2.2%, Govt 1.9%, others 1.6%"
 INE861G08076,30/06/2026,"Insurance 24%, PF/Pension 20%, Govt 19%, Trusts 14%, Banks 12%, Corporates 7.4%, others 3.9%"
 INE861G08084,30/06/2026,"Insurance 47%, PF/Pension 27%, Trusts 13%, Corporates 5.4%, Banks 5.3%, Govt 1.9%, others 0.2%"
+INE862I07023,30/06/2026,"AIF 94%, Corporates 5.6%"
+INE862I07031,30/06/2026,"AIF 94%, Corporates 5.6%"
+INE862I07056,30/06/2026,"AIF 94%, Corporates 5.6%"
+INE865V08050,30/06/2026,Corporates 100%
+INE865V08068,30/06/2026,Corporates 100%
+INE868N07087,30/06/2026,Trusts 100%
+INE868N08069,30/06/2026,Trusts 100%
+INE868N08085,30/06/2026,Trusts 100%
+INE870R08207,30/06/2026,Corporates 100%
+INE878V07014,30/06/2026,FPI 100%
+INE881M07017,30/06/2026,FPI 100%
+INE881M08015,30/06/2026,"FPI 50%, Corporates 50%"
+INE881T08010,30/06/2026,Corporates 100%
+INE881X08095,30/06/2026,FPI 100%
 INE882Z08015,30/06/2026,"Individuals 54%, Corporates 44%, NRIs 0.8%, Trusts 0.8%, Clearing members 0.5%"
 INE882Z08049,30/06/2026,Corporates 100%
 INE883F07314,30/06/2026,"MF 92%, Insurance 5%, Corporates 3%"
@@ -6793,12 +6939,40 @@ INE883F07389,30/06/2026,"MF 78%, Insurance 12%, FPI 10%"
 INE883F07397,30/06/2026,"MF 78%, Insurance 22%"
 INE883F07405,30/06/2026,"MF 75%, Insurance 25%"
 INE883F07413,30/06/2026,MF 100%
+INE883N07011,30/06/2026,FPI 100%
 INE884Q07814,30/06/2026,"Individuals 86%, Corporates 6.6%, NBFC 6.5%, NRIs 0.4%"
 INE884Q07822,30/06/2026,"Individuals 76%, Corporates 24%, NRIs 0.1%"
 INE884Q07830,30/06/2026,"Individuals 97%, Corporates 2.7%"
 INE884Q07855,30/06/2026,"Corporates 62%, Individuals 34%, AIF 3.7%"
 INE884Q07863,30/06/2026,"Individuals 79%, Corporates 21%"
 INE884Z07013,30/06/2026,"AIF 50%, Corporates 33%, Individuals 14%, Banks 2%, Clearing members 0.3%"
+INE886F08026,30/06/2026,Banks 100%
+INE886F08034,30/06/2026,"Banks 88%, Trusts 10%, Corporates 1.9%, Individuals 0.1%"
+INE886S08011,30/06/2026,Corporates 100%
+INE887F08024,30/06/2026,Banks 100%
+INE887F08040,30/06/2026,"Banks 74%, Trusts 24%, Corporates 1.5%, Individuals 0.7%"
+INE887Z07099,30/06/2026,AIF 100%
+INE888F08022,30/06/2026,Banks 100%
+INE888F08030,30/06/2026,"Banks 88%, Trusts 10%, Corporates 2%, Individuals 0.1%"
+INE888G07014,30/06/2026,"Corporates 62%, Banks 38%"
+INE888G07022,30/06/2026,"Corporates 62%, Banks 38%"
+INE888G07030,30/06/2026,"Corporates 62%, Banks 38%"
+INE888G07048,30/06/2026,"Corporates 62%, Banks 38%"
+INE888G07055,30/06/2026,"Corporates 62%, Banks 38%"
+INE888G07063,30/06/2026,Corporates 100%
+INE888G07071,30/06/2026,Corporates 100%
+INE888G07089,30/06/2026,Corporates 100%
+INE888G07097,30/06/2026,Corporates 100%
+INE888G07105,30/06/2026,Corporates 100%
+INE888G07113,30/06/2026,"Banks 69%, Insurance 18%, Corporates 14%"
+INE888J07034,30/06/2026,"Individuals 47%, Corporates 46%, AIF 6.9%, NRIs 0.4%"
+INE888J07042,30/06/2026,AIF 100%
+INE888J08032,30/06/2026,FPI 100%
+INE888K07032,30/06/2026,Corporates 100%
+INE889K08038,30/06/2026,FPI 100%
+INE890Z08018,30/06/2026,Corporates 100%
+INE891A07052,30/06/2026,"Banks 56%, Corporates 29%, Individuals 15%, Trusts 0.1%, NRIs 0.1%"
+INE891A07060,30/06/2026,"Banks 55%, Corporates 29%, Individuals 16%, Trusts 0.1%, NRIs 0.1%"
 INE891F08018,30/06/2026,"Trusts 75%, Banks 11%, Insurance 7.3%, Individuals 3.9%, Corporates 1.1%, PF/Pension 0.9%, others 0.3%"
 INE891K07721,30/06/2026,"Banks 61%, Corporates 26%, MF 7.1%, Insurance 5.7%"
 INE891K07853,30/06/2026,"Corporates 42%, Trusts 33%, Banks 20%, Insurance 5%, Individuals 0.5%"
@@ -6809,7 +6983,11 @@ INE891K07AG7,30/06/2026,"Banks 44%, MF 28%, Corporates 16%, Trusts 6%, Insurance
 INE891K07AK9,30/06/2026,"Trusts 65%, Corporates 33%, Banks 2.2%"
 INE891K07AM5,30/06/2026,"Banks 59%, MF 38%, Corporates 3.1%"
 INE891K08083,30/06/2026,"Individuals 35%, Corporates 29%, Trusts 25%, PF/Pension 10%"
+INE893P08013,30/06/2026,Corporates 100%
 INE894F08103,30/06/2026,"Trusts 76%, Individuals 13%, Corporates 8.9%, PF/Pension 2%, NRIs 0.2%"
+INE894V07060,30/06/2026,FPI 100%
+INE895V07018,30/06/2026,FPI 100%
+INE896F07076,30/06/2026,AIF 100%
 INE896L07975,30/06/2026,"MF 68%, Corporates 20%, Individuals 12%, NRIs 0.5%"
 INE896L07983,30/06/2026,"MF 40%, Corporates 37%, Individuals 19%, Insurance 3.4%"
 INE896L07AE9,30/06/2026,"Corporates 55%, Banks 33%, Individuals 9.2%, AIF 2.7%, NRIs 0.1%"
@@ -6824,6 +7002,14 @@ INE896L07AO8,30/06/2026,"Corporates 77%, Clearing members 23%"
 INE896L07AP5,30/06/2026,MF 100%
 INE896L07AQ3,30/06/2026,"MF 33%, Corporates 27%, NBFC 18%, Individuals 10%, Insurance 9.1%, AIF 2%"
 INE896L07AR1,30/06/2026,MF 100%
+INE897P08121,30/06/2026,FPI 100%
+INE898M07029,30/06/2026,AIF 100%
+INE898P07030,30/06/2026,AIF 100%
+INE902S07059,30/06/2026,AIF 100%
+INE903Q08018,30/06/2026,"Corporates 47%, FPI 34%, NBFC 11%, AIF 6.2%, Individuals 2.1%, Trusts 0.1%"
+INE903U07087,30/06/2026,FPI 100%
+INE904Y07020,30/06/2026,Corporates 100%
+INE905W08045,30/06/2026,FPI 100%
 INE906B07CB9,30/06/2026,"Individuals 73%, Corporates 17%, Banks 5.8%, NRIs 2.3%, Insurance 1%, Trusts 0.4%, others 0.4%"
 INE906B07EF6,30/06/2026,"Corporates 56%, Individuals 25%, Banks 12%, Insurance 6.6%, NRIs 0.5%, AIF 0.1%"
 INE906B07EI0,30/06/2026,"Individuals 51%, Corporates 27%, Banks 19%, Clearing members 1.6%, Insurance 0.8%, NRIs 0.7%, others 0.6%"
@@ -6841,12 +7027,19 @@ INE906B07ID2,30/06/2026,"Govt 45%, PF/Pension 28%, Trusts 13%, Insurance 11%, Co
 INE906B07IE0,30/06/2026,"MF 80%, PF/Pension 12%, Corporates 4.9%, Insurance 3.2%, Trusts 0.4%"
 INE906B07IH3,30/06/2026,"Govt 59%, Trusts 15%, Insurance 15%, PF/Pension 8%, Corporates 2.9%, Individuals 0.3%, others 0.1%"
 INE906B07IZ5,30/06/2026,"Govt 89%, Corporates 5%, Trusts 3%, PF/Pension 2%, Insurance 0.5%, Banks 0.2%, others 0.1%"
+INE907L08069,30/06/2026,Individuals 100%
+INE909H08311,30/06/2026,Corporates 100%
+INE909H08337,30/06/2026,Corporates 100%
+INE909H08352,30/06/2026,Corporates 100%
 INE909H08360,30/06/2026,MF 100%
 INE909H08378,30/06/2026,MF 100%
 INE909H08386,30/06/2026,"MF 55%, Corporates 20%, Insurance 20%, Individuals 4.8%, NRIs 0.1%"
 INE909H08394,30/06/2026,"MF 60%, Corporates 34%, Individuals 4.9%, Trusts 1.5%"
 INE909H08469,30/06/2026,Corporates 100%
+INE910T07035,30/06/2026,AIF 100%
+INE910U07017,30/06/2026,Trusts 100%
 INE911L07154,30/06/2026,"Corporates 97%, Individuals 2.7%"
+INE912H07010,30/06/2026,Banks 100%
 INE915D08DC0,30/06/2026,MF 100%
 INE916DA7RS0,30/06/2026,"Corporates 54%, Insurance 22%, MF 11%, Banks 11%, PF/Pension 1.7%"
 INE916DA7RX0,30/06/2026,"MF 33%, Corporates 26%, Trusts 24%, Insurance 8.5%, Banks 7.7%, PF/Pension 0.8%"
@@ -6872,6 +7065,7 @@ INE916Y07081,30/06/2026,"Corporates 100%, Individuals 0.1%"
 INE918K07JU0,30/06/2026,"Corporates 60%, Individuals 40%"
 INE918K07KA0,30/06/2026,"Individuals 54%, Corporates 44%, NRIs 2.8%"
 INE918K07KG7,30/06/2026,"Corporates 59%, Individuals 41%"
+INE918K07KH5,30/06/2026,"Corporates 80%, Individuals 20%"
 INE918K07KR4,30/06/2026,"Individuals 93%, Corporates 4.1%, NRIs 3.1%"
 INE918K07KW4,30/06/2026,Individuals 100%
 INE918K07PR3,30/06/2026,"Corporates 45%, Individuals 34%, AIF 20%, NBFC 0.8%"
@@ -6886,19 +7080,60 @@ INE918K07QS9,30/06/2026,"Corporates 97%, Individuals 2.5%"
 INE918K07QT7,30/06/2026,"Individuals 76%, Corporates 24%, Clearing members 0.6%"
 INE918T07145,30/06/2026,"Corporates 84%, Individuals 14%, AIF 2%"
 INE918T07152,30/06/2026,"Corporates 66%, Individuals 34%"
+INE918T07160,30/06/2026,"Corporates 91%, Individuals 8.7%"
+INE918T07178,30/06/2026,"Corporates 82%, Individuals 18%"
 INE918T07186,30/06/2026,"Corporates 88%, Individuals 12%"
+INE918T07194,30/06/2026,Corporates 100%
+INE920Q07022,30/06/2026,AIF 100%
+INE920Q07030,30/06/2026,AIF 100%
+INE921M08019,30/06/2026,FPI 100%
+INE921N08017,30/06/2026,VC 100%
+INE923M08015,30/06/2026,Corporates 100%
+INE924K07027,30/06/2026,AIF 100%
+INE925U07023,30/06/2026,Corporates 100%
+INE925U07031,30/06/2026,Corporates 100%
+INE925U07049,30/06/2026,Corporates 100%
+INE925U07056,30/06/2026,Corporates 100%
 INE926R07027,30/06/2026,"Individuals 62%, Corporates 38%, Clearing members 0.2%, NBFC 0.1%, NRIs 0.1%"
 INE926R07035,30/06/2026,"Individuals 71%, Corporates 27%, Clearing members 1.8%, NRIs 0.2%"
 INE926X08015,30/06/2026,MF 100%
+INE927N07065,30/06/2026,Individuals 100%
+INE927N07073,30/06/2026,"Individuals 61%, Corporates 39%"
+INE927N07081,30/06/2026,Corporates 100%
+INE929W07013,30/06/2026,"AIF 54%, NBFC 46%"
+INE930P07023,30/06/2026,Corporates 100%
+INE931S08023,30/06/2026,"Trusts 99%, Individuals 1.3%, Corporates 0.1%"
+INE931S08031,30/06/2026,"Trusts 93%, Banks 5.6%, Individuals 1.6%, NRIs 0.1%, Corporates 0.1%"
+INE932S07122,30/06/2026,AIF 100%
+INE933Z08024,30/06/2026,Corporates 100%
+INE935V08119,30/06/2026,Corporates 100%
 INE936D07174,30/06/2026,"Banks 37%, MF 31%, PF/Pension 29%, Trusts 2.9%"
 INE936D07182,30/06/2026,"MF 81%, Trusts 10%, PF/Pension 6%, Banks 1.9%, Govt 1%, Corporates 0.6%"
 INE936D07190,30/06/2026,"MF 90%, Trusts 6.3%, PF/Pension 3.3%"
+INE937A07095,30/06/2026,Corporates 100%
+INE938H08054,30/06/2026,"FPI 50%, Trusts 50%"
+INE938H08062,30/06/2026,Trusts 100%
+INE938H08070,30/06/2026,"FPI 50%, Trusts 50%"
+INE938H08088,30/06/2026,FPI 100%
+INE938H08096,30/06/2026,"FPI 50%, Trusts 50%"
+INE938L08098,30/06/2026,"Corporates 67%, Trusts 33%"
 INE939L08039,30/06/2026,"PF/Pension 77%, Insurance 18%, Corporates 5%"
+INE939O07019,30/06/2026,Corporates 100%
 INE939X07176,30/06/2026,"Individuals 51%, Corporates 49%, NRIs 0.1%"
 INE939X07242,30/06/2026,"AIF 80%, Corporates 17%, Individuals 2.8%"
 INE939X07259,30/06/2026,"Corporates 56%, Individuals 44%"
 INE941D07158,30/06/2026,"Banks 30%, Corporates 25%, PF/Pension 22%, Insurance 15%, MF 6.5%, Trusts 1.5%, others 1%"
 INE941D07166,30/06/2026,"Banks 36%, Corporates 29%, MF 12%, PF/Pension 12%, Insurance 9%, FPI 1.5%, others 0.6%"
+INE944Y08131,30/06/2026,Trusts 100%
+INE944Y08149,30/06/2026,Trusts 100%
+INE944Y08156,30/06/2026,Trusts 100%
+INE944Y08164,30/06/2026,Trusts 100%
+INE944Y08172,30/06/2026,Trusts 100%
+INE944Y08180,30/06/2026,Trusts 100%
+INE944Y08198,30/06/2026,Trusts 100%
+INE945Y07049,30/06/2026,AIF 100%
+INE945Y07056,30/06/2026,AIF 100%
+INE946W07017,30/06/2026,Corporates 100%
 INE949L08442,30/06/2026,"Insurance 53%, Trusts 17%, PF/Pension 13%, MF 10%, Banks 7.1%"
 INE949L08459,30/06/2026,"Insurance 42%, Banks 33%, Trusts 14%, Corporates 7.8%, PF/Pension 3.2%, Individuals 0.5%"
 INE950O07388,30/06/2026,"Trusts 61%, MF 39%, Individuals 0.4%"
@@ -6914,10 +7149,44 @@ INE950O07545,30/06/2026,MF 100%
 INE950O07560,30/06/2026,MF 100%
 INE950O07578,30/06/2026,"Banks 96%, Corporates 2.4%, Trusts 1.2%, Individuals 0.1%"
 INE950O08303,30/06/2026,"MF 93%, Corporates 6.7%"
+INE950T07015,30/06/2026,"Corporates 52%, AIF 48%"
+INE951J07022,30/06/2026,AIF 100%
+INE951J07063,30/06/2026,AIF 100%
+INE951J07071,30/06/2026,AIF 100%
+INE951S08039,30/06/2026,FPI 100%
+INE952A07052,30/06/2026,FPI 100%
+INE952A07060,30/06/2026,"AIF 79%, FPI 21%"
+INE954W08019,30/06/2026,FPI 100%
+INE954W08027,30/06/2026,FPI 100%
+INE956G07019,30/06/2026,FPI 100%
+INE957H08013,30/06/2026,FPI 100%
+INE957H08021,30/06/2026,FPI 100%
 INE957N07799,30/06/2026,"Corporates 85%, Banks 14%, Trusts 0.6%"
 INE957N08201,30/06/2026,"Trusts 58%, Govt 21%, Corporates 19%, Individuals 1.4%, NBFC 0.2%"
+INE959P07105,30/06/2026,"Corporates 65%, Individuals 35%"
+INE959P07113,30/06/2026,Corporates 100%
+INE959P07121,30/06/2026,Corporates 100%
+INE961W08071,30/06/2026,FPI 100%
+INE961W08097,30/06/2026,FPI 100%
+INE961W08105,30/06/2026,FPI 100%
+INE961W08113,30/06/2026,FPI 100%
+INE961W08121,30/06/2026,FPI 100%
+INE961W08139,30/06/2026,FPI 100%
+INE961W08147,30/06/2026,FPI 100%
+INE961W08154,30/06/2026,FPI 100%
+INE961W08162,30/06/2026,FPI 100%
+INE961W08170,30/06/2026,FPI 100%
+INE964H07029,30/06/2026,"Banks 75%, Corporates 24%, Other FIs 1.3%"
 INE964R07069,30/06/2026,"Individuals 74%, Corporates 20%, NBFC 5.2%, Clearing members 0.5%, AIF 0.1%"
 INE964R07093,30/06/2026,"Corporates 70%, Individuals 30%, NRIs 0.6%"
+INE964U08020,30/06/2026,AIF 100%
+INE964U08046,30/06/2026,AIF 100%
+INE969G08028,30/06/2026,FPI 100%
+INE969S08155,30/06/2026,Individuals 100%
+INE972H08020,30/06/2026,Corporates 100%
+INE972L07024,30/06/2026,Corporates 100%
+INE973T08023,30/06/2026,Corporates 100%
+INE974T08021,31/03/2026,Corporates 100%
 INE975F07IM9,30/06/2026,"Corporates 58%, Insurance 19%, Trusts 14%, MF 8.5%"
 INE975F07IO5,30/06/2026,"Corporates 41%, MF 29%, Trusts 22%, Insurance 8.3%"
 INE975F07IP2,30/06/2026,"MF 34%, Banks 32%, Corporates 24%, Trusts 8.8%, Insurance 1.6%"
@@ -6929,6 +7198,17 @@ INE975F07IW8,30/06/2026,"Corporates 43%, Banks 29%, MF 21%, Trusts 7.1%"
 INE975F07IX6,30/06/2026,"Banks 60%, MF 20%, Insurance 18%, Corporates 2%"
 INE975F07JB0,30/06/2026,"MF 58%, Corporates 42%"
 INE975F07JC8,30/06/2026,"Corporates 75%, MF 20%, Banks 5%"
+INE975G07019,30/06/2026,"Trusts 87%, Corporates 7.1%, Individuals 5.6%"
+INE975G07027,30/06/2026,"PF/Pension 51%, Corporates 29%, Trusts 11%, FPI 10%"
+INE975G07076,30/06/2026,"Individuals 48%, Trusts 45%, Corporates 4.8%, Banks 1.8%"
+INE975G07092,30/06/2026,"Individuals 71%, Trusts 29%, Corporates 0.1%"
+INE975G08199,30/06/2026,"Trusts 93%, Corporates 5.8%, Individuals 0.9%, Banks 0.1%"
+INE975G08207,30/06/2026,"Trusts 99%, Individuals 1.3%"
+INE975G08215,30/06/2026,"Trusts 96%, Corporates 4.2%, Individuals 0.2%"
+INE975G08231,30/06/2026,"Trusts 79%, Corporates 15%, Banks 6.6%, Individuals 0.2%"
+INE975G08256,30/06/2026,"Trusts 72%, Corporates 27%, Individuals 1.5%"
+INE975G08264,30/06/2026,"Trusts 81%, Corporates 16%, Individuals 2.9%"
+INE975G08306,30/06/2026,"Corporates 96%, Trusts 3.9%, Individuals 0.1%"
 INE976I07CT9,30/06/2026,"Corporates 46%, Insurance 19%, MF 15%, Trusts 13%, PF/Pension 2.7%, Individuals 2.4%, others 2.1%"
 INE976I07CX1,30/06/2026,"Insurance 39%, Trusts 33%, Corporates 15%, Banks 8.5%, MF 4.6%, FPI 0.1%, others 0.1%"
 INE976I07CY9,30/06/2026,"Corporates 38%, MF 28%, Insurance 15%, Banks 10%, FPI 8.3%, AIF 0.3%"
@@ -6938,9 +7218,40 @@ INE976I07DC3,30/06/2026,"Banks 34%, MF 33%, Corporates 20%, Insurance 12%, Trust
 INE976I07DD1,30/06/2026,"Banks 29%, PF/Pension 27%, Corporates 22%, Trusts 14%, Insurance 8.9%, Individuals 0.4%"
 INE976I07DE9,30/06/2026,"MF 95%, Corporates 5.1%"
 INE976I07DF6,30/06/2026,"MF 47%, PF/Pension 28%, Banks 14%, Corporates 10%, Insurance 2.5%"
+INE976S08010,30/06/2026,Corporates 100%
+INE977M07013,30/06/2026,AIF 100%
+INE978T07016,30/06/2026,FPI 100%
+INE978T07024,30/06/2026,AIF 100%
+INE978T07032,30/06/2026,FPI 100%
+INE978T07040,30/06/2026,"FPI 81%, AIF 19%"
+INE982N07011,30/06/2026,AIF 100%
+INE984M07019,30/06/2026,Corporates 100%
+INE986V08021,30/06/2026,Corporates 100%
+INE987V08011,30/06/2026,Corporates 100%
+INE988C07011,30/06/2026,Corporates 100%
+INE988E07017,30/06/2026,Banks 100%
+INE988I08032,30/06/2026,Corporates 100%
+INE988I08040,30/06/2026,Corporates 100%
+INE988I08057,30/06/2026,Corporates 100%
+INE988I08065,30/06/2026,Corporates 100%
+INE988I08073,30/06/2026,Corporates 100%
+INE988I08081,30/06/2026,Corporates 100%
+INE989C08025,30/06/2026,Corporates 100%
+INE990I07055,30/06/2026,AIF 100%
+INE993K07071,30/06/2026,AIF 100%
+INE993Q07029,30/06/2026,"Banks 93%, Corporates 6.7%"
+INE994K07087,30/06/2026,"Corporates 100%, Individuals 0.1%"
+INE994S08013,30/06/2026,AIF 100%
 INE996U07248,30/06/2026,"Individuals 78%, Corporates 22%"
 INE996U07339,30/06/2026,"Corporates 63%, Banks 35%, Clearing members 1.7%"
 INE996U07461,30/06/2026,"AIF 69%, Corporates 20%, NBFC 11%"
 INE996U07511,30/06/2026,"Clearing members 45%, Corporates 40%, Individuals 15%"
 INE996U07537,30/06/2026,Corporates 100%
+INE997V08028,30/06/2026,Corporates 100%
+INE998V08026,30/06/2026,Corporates 100%
 INE998Y07188,30/06/2026,"Individuals 94%, Corporates 4.8%, Clearing members 1%, NRIs 0.1%"
+INE999H07033,30/06/2026,AIF 100%
+INE999H07041,30/06/2026,AIF 100%
+INE999H07058,30/06/2026,AIF 100%
+INE999H07074,30/06/2026,AIF 100%
+INE999H07082,30/06/2026,AIF 100%
