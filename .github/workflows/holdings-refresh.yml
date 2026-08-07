@@ -1,14 +1,19 @@
-# Quarterly investor-category holdings refresh.
+# Quarterly investor-category holdings refresh (+ on-demand backfill).
 #
 # NSDL publishes a per-ISIN quarterly "Statement showing pattern of
 # Debenture/Bond Holders" (units held by investor category). fetch_holdings.py
-# pulls the LATEST quarter for every yield-covered bond (MF-held or
-# secondary-traded, ~2.2k ISINs — the full universe would be ~42k requests)
-# and writes data/holdings_mix.csv, which the app shows as "Holders Mix".
+# pulls the LATEST quarter for every covered bond — yield-covered ISINs plus
+# all active non-PSU Corporate/Infrastructure NCDs (~8.5k total; classification
+# mirrors the app) — and writes data/holdings_mix.csv ("Holders Mix" column).
 #
-# Quarterly statements land ~3 weeks after quarter-end, so this runs on the
-# 25th of Jan/Apr/Jul/Oct (plus manual dispatch anytime). Each run is
-# best-effort: ISINs that fail keep their previous quarter's row.
+# Quarterly statements land ~3 weeks after quarter-end, so the cron runs on
+# the 25th of Jan/Apr/Jul/Oct. Each run is best-effort: ISINs that fail keep
+# their previous quarter's row.
+#
+# Manual dispatch supports a BACKFILL mode: set backfill_batches > 0 to fetch
+# only not-yet-covered ISINs in batches of 800, committing and pushing after
+# every batch so an interrupted run loses nothing. Used for the 2026-08 scope
+# expansion; harmless to re-run (exits early when nothing is left).
 
 name: Holdings mix quarterly refresh
 
@@ -16,6 +21,11 @@ on:
   schedule:
     - cron: "30 4 25 1,4,7,10 *"   # 10:00 IST, 25th of Jan/Apr/Jul/Oct
   workflow_dispatch:
+    inputs:
+      backfill_batches:
+        description: "Backfill N batches of 800 new-only ISINs (0 = full refresh)"
+        required: false
+        default: "0"
 
 permissions:
   contents: write
@@ -27,7 +37,7 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
@@ -38,13 +48,42 @@ jobs:
       - name: Install dependencies
         run: pip install requests pandas openpyxl
 
-      - name: Fetch holdings
-        run: python fetch_holdings.py 2>&1 | tee holdings_log.txt
-
-      - name: Commit and push
+      - name: Configure git
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Backfill in batches
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.backfill_batches != '0' && github.event.inputs.backfill_batches != ''
+        run: |
+          set -o pipefail
+          for i in $(seq 1 "${{ github.event.inputs.backfill_batches }}"); do
+            echo "=== batch $i ==="
+            rc=0
+            python fetch_holdings.py --new-only 800 2>&1 | tee holdings_log.txt || rc=$?
+            if [ "$rc" = "3" ]; then
+              echo "Backfill complete — nothing left."
+              break
+            elif [ "$rc" != "0" ]; then
+              echo "Batch $i failed (rc=$rc) — stopping, prior batches are committed."
+              exit "$rc"
+            fi
+            git add data/holdings_mix.csv
+            if git diff --cached --quiet; then
+              echo "Batch $i produced no changes."
+              continue
+            fi
+            N=$(grep -oP 'wrote .*: \K\d+' holdings_log.txt || echo "?")
+            git commit -m "Holdings mix backfill batch $i (${N} ISINs total)"
+            git pull --rebase origin main
+            git push
+          done
+
+      - name: Full refresh
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.backfill_batches == '0' || github.event.inputs.backfill_batches == ''
+        run: |
+          set -o pipefail
+          python fetch_holdings.py 2>&1 | tee holdings_log.txt
           git add data/holdings_mix.csv
           if git diff --cached --quiet; then
             echo "No changes — nothing to commit."
@@ -52,6 +91,7 @@ jobs:
           fi
           N=$(grep -oP 'wrote .*: \K\d+' holdings_log.txt || echo "?")
           git commit -m "Auto-refresh holdings mix (${N} ISINs)"
+          git pull --rebase origin main
           git push
 
       - name: Job summary
