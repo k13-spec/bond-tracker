@@ -27,6 +27,9 @@ to newly issued bonds on every run.
 Output: data/holdings_mix.csv with columns
     isin, as_of, mix     e.g.  "MF 88%, Banks 8%, FPI 4%"
 (non-zero categories only, sorted by share, % of the public-holding total).
+Side file: data/holdings_misses.csv — ISINs attempted but with no statement
+on NSDL, so --new-only backfills skip them instead of re-fetching every
+batch. Full refreshes rebuild it (all misses re-checked each quarter).
 
 Usage:
     python fetch_holdings.py                  # refresh ALL targets (quarterly)
@@ -51,6 +54,7 @@ import requests
 
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "data" / "holdings_mix.csv"
+MISSES = ROOT / "data" / "holdings_misses.csv"
 BASE = "https://www.indiabondinfo.nsdl.com/bds-service/v1/public/bdsinfo"
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -414,9 +418,19 @@ def main():
         for r in csv.DictReader(open(OUT, encoding="utf-8")):
             existing[r["isin"]] = (r["as_of"], r["mix"])
 
+    # ISINs already attempted with no statement on NSDL. Without this,
+    # --new-only batches re-fetch earlier batches' misses before reaching
+    # new ground and the tail of the candidate list is never attempted
+    # (the bug in the 2026-08-07 initial backfill). Full refreshes rebuild
+    # this file from scratch so misses are re-checked every quarter.
+    known_misses = set()
+    if MISSES.exists():
+        for r in csv.DictReader(open(MISSES, encoding="utf-8")):
+            known_misses.add(r["isin"])
+
     if new_only:
-        isins = [i for i in isins if i not in existing]
-        print(f"not yet covered: {len(isins)}")
+        isins = [i for i in isins if i not in existing and i not in known_misses]
+        print(f"not yet attempted: {len(isins)}")
         if not isins:
             print("nothing left to backfill.")
             return 3
@@ -425,6 +439,7 @@ def main():
     print(f"fetching this run: {len(isins)}", flush=True)
 
     results, ok, miss = dict(existing), 0, 0
+    missed_now = []
     for n, isin in enumerate(isins, 1):
         try:
             res = fetch_one(get, isin)
@@ -433,7 +448,9 @@ def main():
                 ok += 1
             else:
                 miss += 1
+                missed_now.append(isin)
         except Exception as e:
+            # transient error, NOT a confirmed "no statement" — don't record
             print(f"  ERR {isin}: {e}", file=sys.stderr)
             miss += 1
         if n % 100 == 0:
@@ -441,8 +458,10 @@ def main():
         time.sleep(0.25)
 
     # Systemic-failure guard: merge semantics never lose rows, but refuse to
-    # claim success if almost nothing came back on a sizable run.
-    if existing and (ok + miss) >= 50 and ok < 50:
+    # claim success if almost nothing came back on a sizable run. Misses
+    # don't count against the guard when they're the expected outcome
+    # (backfill of never-attempted names has a ~45% hit rate).
+    if existing and (ok + miss) >= 50 and ok < 50 and not new_only:
         print(f"ABORT: only {ok} fresh results — keeping existing CSV.", file=sys.stderr)
         return 1
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -452,7 +471,17 @@ def main():
         for isin in sorted(results):
             as_of, mix = results[isin]
             w.writerow([isin, as_of, mix])
+    # Misses file: full refresh rebuilds it (re-check everything quarterly);
+    # --new-only appends this run's confirmed no-statement ISINs.
+    today_s = date.today().isoformat()
+    all_misses = (known_misses | set(missed_now)) if new_only else set(missed_now)
+    with open(MISSES, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["isin", "checked_on"])
+        for isin in sorted(all_misses):
+            w.writerow([isin, today_s])
     print(f"wrote {OUT}: {len(results)} ISINs ({ok} refreshed, {miss} without data this run)")
+    print(f"wrote {MISSES}: {len(all_misses)} known no-statement ISINs")
     return 0
 
 
