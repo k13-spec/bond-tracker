@@ -68,12 +68,12 @@ jobs:
               echo "Batch $i failed (rc=$rc) — stopping, prior batches are committed."
               exit "$rc"
             fi
-            git add data/holdings_mix.csv
+            git add data/holdings_mix.csv data/holdings_misses.csv
             if git diff --cached --quiet; then
               echo "Batch $i produced no changes."
               continue
             fi
-            N=$(grep -oP 'wrote .*: \K\d+' holdings_log.txt || echo "?")
+            N=$(grep -oP 'wrote .*holdings_mix\.csv: \K\d+' holdings_log.txt | head -1 || echo "?")
             git commit -m "Holdings mix backfill batch $i (${N} ISINs total)"
             git pull --rebase origin main
             git push
@@ -84,12 +84,12 @@ jobs:
         run: |
           set -o pipefail
           python fetch_holdings.py 2>&1 | tee holdings_log.txt
-          git add data/holdings_mix.csv
+          git add data/holdings_mix.csv data/holdings_misses.csv
           if git diff --cached --quiet; then
             echo "No changes — nothing to commit."
             exit 0
           fi
-          N=$(grep -oP 'wrote .*: \K\d+' holdings_log.txt || echo "?")
+          N=$(grep -oP 'wrote .*holdings_mix\.csv: \K\d+' holdings_log.txt | head -1 || echo "?")
           git commit -m "Auto-refresh holdings mix (${N} ISINs)"
           git pull --rebase origin main
           git push
