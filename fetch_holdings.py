@@ -353,11 +353,25 @@ def target_isins() -> list:
             covered |= set(pd.read_csv(p)[col].astype(str).str.strip())
     covered = {i for i in covered if i.startswith("INE") and len(i) == 12}
 
-    SESSION.get("https://www.indiabondinfo.nsdl.com/CBDServices/", timeout=20)
-    time.sleep(0.3)
-    r = SESSION.get(f"{BASE}/listofsecurities?type=Active", timeout=180,
-                    headers={"Accept": "*/*"})   # xlsx download, not JSON
-    r.raise_for_status()
+    # The active-list download is a ~3 MB xlsx and runs once per invocation —
+    # retry transient failures (IncompleteRead killed backfill batch 4 on
+    # 2026-08-07) instead of crashing the whole batch.
+    last = None
+    for attempt in range(3):
+        try:
+            SESSION.get("https://www.indiabondinfo.nsdl.com/CBDServices/", timeout=20)
+            time.sleep(0.3)
+            r = SESSION.get(f"{BASE}/listofsecurities?type=Active", timeout=180,
+                            headers={"Accept": "*/*"})   # xlsx download, not JSON
+            r.raise_for_status()
+            break
+        except Exception as e:
+            last = e
+            print(f"  active-list download failed (attempt {attempt + 1}): {e}",
+                  file=sys.stderr)
+            time.sleep(10 * (attempt + 1))
+    else:
+        raise last
     warnings.filterwarnings("ignore")
     wb = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
     ws = wb.active
