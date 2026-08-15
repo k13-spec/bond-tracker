@@ -1070,8 +1070,15 @@ def _sector_checkbox_panel(available_sectors: list) -> list:
     for s in available_sectors:
         grouped[_sector_group(s)].append(s)
 
+    # Epoch-aware keys so the Reset Filters button (which bumps flt_epoch)
+    # re-mounts the checkboxes with defaults — see the sidebar reset handler.
+    _fe = st.session_state.get("flt_epoch", 0)
+
+    def _ck(s):
+        return f"bchk_{_fe}_{s}"
+
     for s in available_sectors:
-        wkey = f"bchk_{s}"
+        wkey = _ck(s)
         if wkey not in st.session_state:
             st.session_state[wkey] = True
 
@@ -1079,16 +1086,16 @@ def _sector_checkbox_panel(available_sectors: list) -> list:
     qc1, qc2, qc3 = st.columns(3)
     if qc1.button("All",  key="bsec_all",  use_container_width=True):
         for s in available_sectors:
-            st.session_state[f"bchk_{s}"] = True
+            st.session_state[_ck(s)] = True
         st.rerun()
     if qc2.button("None", key="bsec_none", use_container_width=True):
         for s in available_sectors:
-            st.session_state[f"bchk_{s}"] = False
+            st.session_state[_ck(s)] = False
         st.rerun()
     if qc3.button("Corp", key="bsec_corp", use_container_width=True,
                   help="Corporate sectors only"):
         for s in available_sectors:
-            st.session_state[f"bchk_{s}"] = (_sector_group(s) == "Corporate")
+            st.session_state[_ck(s)] = (_sector_group(s) == "Corporate")
         st.rerun()
 
     selected = []
@@ -1100,14 +1107,14 @@ def _sector_checkbox_panel(available_sectors: list) -> list:
             ga1, ga2 = st.columns(2)
             if ga1.button("All",  key=f"bgrp_all_{grp}",  use_container_width=True):
                 for s in members:
-                    st.session_state[f"bchk_{s}"] = True
+                    st.session_state[_ck(s)] = True
                 st.rerun()
             if ga2.button("None", key=f"bgrp_none_{grp}", use_container_width=True):
                 for s in members:
-                    st.session_state[f"bchk_{s}"] = False
+                    st.session_state[_ck(s)] = False
                 st.rerun()
             for sector in sorted(members):
-                if st.checkbox(sector or "(unclassified)", key=f"bchk_{sector}"):
+                if st.checkbox(sector or "(unclassified)", key=_ck(sector)):
                     selected.append(sector)
     return selected
 
@@ -1449,11 +1456,22 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Workflow dispatch failed: {e}")
 
+    # Filter-widget epoch: bumping it changes every filter widget's key, which
+    # forces the frontend to re-mount them with defaults. Clearing session
+    # state alone resets the VALUES but leaves stale chips/text visible in
+    # widgets whose identity didn't change (Streamlit frontend quirk).
+    if "flt_epoch" not in st.session_state:
+        st.session_state.flt_epoch = 0
+    _fe = st.session_state.flt_epoch
+
     if st.button("✕  Reset Filters", type="secondary", use_container_width=True,
                  help="Clear the search box and return every filter to its "
                       "default (does not re-fetch any data)"):
         st.query_params.clear()   # also clears ?issuer= deep-link pre-fill
-        st.session_state.clear()  # resets all filter widgets to defaults
+        for _k in list(st.session_state.keys()):
+            if _k.startswith(("flt_", "bchk_")):
+                del st.session_state[_k]
+        st.session_state.flt_epoch = _fe + 1
         st.rerun()
 
     st.divider()
@@ -1462,11 +1480,12 @@ with st.sidebar:
     _qp_issuer = st.query_params.get("issuer", "")
     search_query = st.text_input(
         "Search by ISIN or Issuer", placeholder="e.g. INE002A07HF3, Tata, HDFC",
-        value=_qp_issuer,
+        value=_qp_issuer, key=f"flt_search_{_fe}",
     ).strip()
 
     maturity_years = sorted(df["Maturity Date"].dt.year.dropna().unique().astype(int).tolist())
-    selected_years = st.multiselect("Maturity Year (blank = all)", maturity_years)
+    selected_years = st.multiselect("Maturity Year (blank = all)", maturity_years,
+                                    key=f"flt_years_{_fe}")
 
     st.divider()
 
@@ -1487,6 +1506,7 @@ with st.sidebar:
         "Minimum Rating",
         options=list(grade_options.keys()),
         index=list(grade_options.keys()).index("All (inc. unrated)"),
+        key=f"flt_grade_{_fe}",
     )
     selected_grade_set = grade_options[grade_choice]
 
@@ -1495,6 +1515,7 @@ with st.sidebar:
         options=RATING_GRADES,
         default=[],
         placeholder="e.g. AA-",
+        key=f"flt_exact_{_fe}",
         help="Show only bonds whose current rating is one of the ticked "
              "grades (e.g. tick just AA-). Overrides Minimum Rating. "
              "Ratings are cross-referenced against the ratings tracker DB "
@@ -1506,6 +1527,7 @@ with st.sidebar:
     # ---- MF holdings ----
     only_mf_held = st.checkbox(
         "Only MF-held bonds",
+        key=f"flt_mf_{_fe}",
         help="Show only bonds appearing in the latest fortnightly debt-scheme "
              "disclosures of HDFC / SBI / ICICI Pru / Aditya Birla / Axis / "
              "Nippon / Kotak / UTI / Tata MF",
@@ -1516,8 +1538,8 @@ with st.sidebar:
     # ---- Issue size ----
     st.markdown("**Issue Size (₹ Crores)**")
     sc1, sc2 = st.columns(2)
-    min_size = sc1.number_input("Min", min_value=0.0, value=0.0, step=50.0, format="%.0f", label_visibility="collapsed")
-    max_size = sc2.number_input("Max (0=no limit)", min_value=0.0, value=0.0, step=500.0, format="%.0f", label_visibility="collapsed")
+    min_size = sc1.number_input("Min", min_value=0.0, value=0.0, step=50.0, format="%.0f", label_visibility="collapsed", key=f"flt_szmin_{_fe}")
+    max_size = sc2.number_input("Max (0=no limit)", min_value=0.0, value=0.0, step=500.0, format="%.0f", label_visibility="collapsed", key=f"flt_szmax_{_fe}")
     sc1.caption("Min Cr")
     sc2.caption("Max Cr (0=no limit)")
 
@@ -1529,11 +1551,13 @@ with st.sidebar:
         options=["All", "Listed only", "Unlisted only"],
         index=0,
         horizontal=True,
+        key=f"flt_listed_{_fe}",
     )
 
     # ---- PSU / sovereign ----
     exclude_psu = st.checkbox(
         "Exclude PSU / Sovereign",
+        key=f"flt_psu_{_fe}",
         help="Hide government-owned / public sector issuers. Uses NSDL's "
              "Type of Issuer-Ownership field, backed up by name-based "
              "detection where NSDL leaves it blank or misfiles it.",
@@ -1545,6 +1569,7 @@ with st.sidebar:
         options=["All", "Exclude MLDs", "Only MLDs"],
         index=0,
         horizontal=True,
+        key=f"flt_mld_{_fe}",
         help="MLDs are detected from the coupon text filed with NSDL "
              "(Nifty/Sensex/index/gold/G-sec-linked underlyings — see the "
              "Coupon Detail column).",
@@ -1555,13 +1580,14 @@ with st.sidebar:
     # ---- Instrument type ----
     with st.expander("Instrument Type", expanded=False):
         all_types = sorted(df["Type"].dropna().unique().tolist())
-        selected_types = st.multiselect("Types (blank = all)", all_types, label_visibility="collapsed")
+        selected_types = st.multiselect("Types (blank = all)", all_types, label_visibility="collapsed", key=f"flt_types_{_fe}")
 
     # ---- Maturity window ----
     with st.expander("Maturity Window", expanded=False):
         max_days = st.slider(
             "Maturing within N days (0 = no limit)",
             min_value=0, max_value=3650, value=0, step=30,
+            key=f"flt_days_{_fe}",
         )
 
     st.divider()
@@ -1578,8 +1604,9 @@ with st.sidebar:
     sort_col = st.selectbox("Sort by", [
         "Maturity Date", "Issue Date", "Issue Size (Cr)", "Coupon Rate (%)",
         "Rating", "Issuer", "Days to Maturity", "Yield (%)"
-    ], label_visibility="collapsed")
-    sort_asc = st.radio("Order", ["Ascending", "Descending"], horizontal=True) == "Ascending"
+    ], label_visibility="collapsed", key=f"flt_sort_{_fe}")
+    sort_asc = st.radio("Order", ["Ascending", "Descending"], horizontal=True,
+                        key=f"flt_order_{_fe}") == "Ascending"
 
 
 # ------------------------------------------------------------------ #
