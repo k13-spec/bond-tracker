@@ -1449,6 +1449,13 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Workflow dispatch failed: {e}")
 
+    if st.button("✕  Reset Filters", type="secondary", use_container_width=True,
+                 help="Clear the search box and return every filter to its "
+                      "default (does not re-fetch any data)"):
+        st.query_params.clear()   # also clears ?issuer= deep-link pre-fill
+        st.session_state.clear()  # resets all filter widgets to defaults
+        st.rerun()
+
     st.divider()
     # ---- Search ----
     # Pre-fill from deep-link: ?issuer=HDFC
