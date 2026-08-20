@@ -10,9 +10,11 @@ Download the latest fortnightly debt-scheme portfolio disclosures from
 Usage:  python fetch_disclosures.py 2026-06-30 [out_dir]
         (date = the fortnight-end being fetched: 15th or month-end)
 
-Per-AMC quirks (re-verified 2026-08-05):
+Per-AMC quirks (re-verified 2026-08-20):
   - HDFC: one xlsx per debt scheme, predictable S3 URLs; update HDFC_SCHEMES
-    when schemes launch/merge/mature.
+    when schemes launch/merge/mature. Month in filename switched from full
+    ("15-August-2026") to abbreviated ("15-Aug-2026") with the Aug-2026
+    fortnight — both formats are probed.
   - ABSL: filename convention changes almost every fortnight — several
     variants are probed (zip and xls).
   - Axis: CMS API (POST /cms/get-scheme-documents) with a static public
@@ -68,7 +70,8 @@ HDFC_SCHEMES = [
     "HDFC Diversified Equity All Cap Active FOF",
     "HDFC CRISIL-IBX Financial Services 9-12 Months Debt Index Fund",
     "HDFC CRISIL-IBX Financial Services 3-6 Months Debt Index Fund",
-    "HDFC Credit Risk Debt Fund", "HDFC Charity Fund for Cancer Cure",
+    "HDFC Credit Risk Debt Fund", "HDFC Corporate Bond Fund",
+    "HDFC Charity Fund for Cancer Cure",
     "HDFC Banking and PSU Debt Fund",
 ]
 
@@ -130,14 +133,19 @@ def fetch(d: date, out: Path):
     # ---- HDFC (per-scheme files) -------------------------------------
     print("HDFC…")
     for scheme in HDFC_SCHEMES:
-        fname = f"{scheme} - {dd}-{mon_full}-{yyyy}.xlsx"
-        urls = [f"https://files.hdfcfund.com/s3fs-public/{f}/{requests.utils.quote(fname)}"
-                for f in reversed(folders)]
-        content, _ = try_urls(urls)
-        if content:
-            save(out / "hdfc" / fname, content)
-        else:
-            print(f"  MISS {fname}")
+        content = None
+        # abbreviated month first (current convention since Aug-2026),
+        # full month as fallback (convention up to Jul-2026)
+        for m in (mon_abbr, mon_full):
+            fname = f"{scheme} - {dd}-{m}-{yyyy}.xlsx"
+            urls = [f"https://files.hdfcfund.com/s3fs-public/{f}/{requests.utils.quote(fname)}"
+                    for f in reversed(folders)]
+            content, _ = try_urls(urls)
+            if content:
+                save(out / "hdfc" / fname, content)
+                break
+        if not content:
+            print(f"  MISS {scheme} - {dd}-{mon_abbr}|{mon_full}-{yyyy}.xlsx")
 
     # ---- SBI ----------------------------------------------------------
     print("SBI…")
@@ -162,6 +170,7 @@ def fetch(d: date, out: Path):
     print("Aditya Birla…")
     ddmmyy = f"{dd}{mm}{yy}"
     names = [
+        f"absl_fortnightly_portfolio_report_{ddmmyy}.zip",   # current (since 15-Aug-2026)
         f"sebi_fortnightly_portfolio_report_{ddmmyy}.zip",
         f"sebifortnightlyportfolioreport{ddmmyy}.xls",
         f"sebifortnightlyportfolioreport{ddmmyy}.xlsx",
