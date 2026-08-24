@@ -1500,9 +1500,11 @@ st.divider()
 # ------------------------------------------------------------------ #
 # ------------------------------------------------------------------ #
 # Column picker — which table columns are shown. Remembered per browser:
-# the choice is mirrored into the URL (?cols=A|B|C) and into
-# localStorage; on a fresh load with no ?cols= the tiny JS component
-# below restores it from localStorage by reloading with ?cols= set.
+# the choice is mirrored into the URL (?cols=A|B|C) and into a cookie
+# (set by a tiny same-origin JS component); on a fresh load with no
+# ?cols= the cookie is read server-side via st.context.cookies. (An
+# earlier localStorage + reload-with-?cols= design failed: Streamlit's
+# component iframe is sandboxed and may not navigate its parent.)
 # Deliberately NOT epoch-keyed: Reset Filters leaves the column view alone.
 # ------------------------------------------------------------------ #
 ALL_DISPLAY_COLS = [
@@ -1516,34 +1518,25 @@ CORE_DISPLAY_COLS = [
     "ISIN", "Issuer", "Coupon Rate (%)", "Maturity Date", "Issue Size (Cr)",
     "Rating", "Yield (%)", "As of", "Spread (bps)", "Holders",
 ]
-_COLS_LS_KEY = "bt_visible_cols"   # localStorage key (per browser)
+_COLS_COOKIE = "bt_visible_cols"   # cookie name (per browser, 1-year expiry)
 
 
 def _cols_from_param(raw: str) -> list:
     return [c for c in raw.split("|") if c in ALL_DISPLAY_COLS] if raw else []
 
 
-_fresh_load = "col_picker" not in st.session_state
-_restoring_cols = False   # True on the one run that asks localStorage
-if _fresh_load:
-    _init_cols = _cols_from_param(st.query_params.get("cols", ""))
+def _cols_from_cookie() -> list:
+    try:
+        raw = st.context.cookies.get(_COLS_COOKIE, "")
+    except Exception:
+        raw = ""
+    return _cols_from_param(urllib.parse.unquote(raw)) if raw else []
+
+
+if "col_picker" not in st.session_state:
+    _init_cols = (_cols_from_param(st.query_params.get("cols", ""))
+                  or _cols_from_cookie())
     st.session_state.col_picker = _init_cols or list(ALL_DISPLAY_COLS)
-    if not _init_cols:
-        _restoring_cols = True
-        # No ?cols= in the URL: ask the browser whether it remembers one.
-        # If it does, reload the page with ?cols= set (one-time bounce).
-        components.html(f"""<script>
-(function () {{
-  try {{
-    var saved = window.localStorage.getItem({json.dumps(_COLS_LS_KEY)});
-    if (!saved) return;
-    var url = new URL(window.parent.location.href);
-    if (url.searchParams.get("cols")) return;
-    url.searchParams.set("cols", saved);
-    window.parent.location.replace(url.toString());
-  }} catch (e) {{}}
-}})();
-</script>""", height=0)
 
 with st.sidebar:
     st.header("Filters")
@@ -1773,15 +1766,13 @@ if _cols_param:
         st.query_params["cols"] = _cols_param
 elif "cols" in st.query_params:
     del st.query_params["cols"]
-# Mirror to localStorage — but NOT on the fresh-load run that is still
-# reading it (the save would race the restore and wipe the stored view).
-if not _restoring_cols:
-    components.html(f"""<script>
+# Mirror the choice into a 1-year cookie so the next visit starts from it.
+components.html(f"""<script>
 (function () {{
   try {{
-    var v = {json.dumps(_cols_param)};
-    if (v) window.localStorage.setItem({json.dumps(_COLS_LS_KEY)}, v);
-    else window.localStorage.removeItem({json.dumps(_COLS_LS_KEY)});
+    var v = {json.dumps(urllib.parse.quote(_cols_param, safe=""))};
+    var base = {json.dumps(_COLS_COOKIE)} + "=" + v + "; path=/; SameSite=Lax; Secure";
+    document.cookie = base + (v ? "; max-age=31536000" : "; max-age=0");
   }} catch (e) {{}}
 }})();
 </script>""", height=0)
