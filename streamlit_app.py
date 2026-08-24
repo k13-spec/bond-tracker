@@ -21,6 +21,7 @@ import urllib.parse
 import warnings
 from datetime import date, datetime
 
+import numpy as np
 import openpyxl
 import pandas as pd
 import requests
@@ -813,6 +814,94 @@ def _load_secondary_history() -> pd.DataFrame:
             columns=["isin", "yield", "as_of", "source", "trade_value_cr"])
 
 
+# ------------------------------------------------------------------ #
+# Spread vs NABARD benchmark
+# ------------------------------------------------------------------ #
+NABARD_ISIN_RE = r"^INE261F(08|16)"   # NABARD bonds only (INE261F14… = CPs, excluded)
+NABARD_MAX_GAP_DAYS = 10              # benchmark maturity must be within ±10 days
+NABARD_AGE_WEIGHT = 2.0               # cost = |maturity gap days| + 2 × (yield age days)
+NABARD_MIN_TRADE_CR = 50.0            # exchange trades count only if ≥ ₹50 cr
+
+
+def _attach_nabard_spread(df: pd.DataFrame, mf_hist: pd.DataFrame,
+                          sec_hist: pd.DataFrame, today) -> pd.DataFrame:
+    """Add Spread (bps) and NABARD Ref* columns to every bond that has a yield.
+
+    Benchmark candidates = every dated NABARD bond observation in the MF
+    history plus every BSE/NSE trade of ≥ ₹50 cr in the trade history, joined
+    to the NSDL universe for the maturity date. For each bond the candidate
+    with the lowest cost wins, where
+        cost = |benchmark maturity − bond maturity| in days
+               + NABARD_AGE_WEIGHT × (today − benchmark as-of) in days,
+    subject to the maturity gap being ≤ NABARD_MAX_GAP_DAYS; ties go to the
+    smaller gap. Freshness is measured against today (not the bond's own
+    as-of). Bonds with no candidate inside the window, and NABARD's own
+    bonds, are left blank.
+    """
+    out_cols = ["Spread (bps)", "NABARD Ref", "NABARD Mat",
+                "NABARD Yield (%)", "NABARD As of", "NABARD Src"]
+    for c in out_cols:
+        df[c] = None
+
+    parts = []
+    if not mf_hist.empty:
+        m = mf_hist[mf_hist["isin"].str.match(NABARD_ISIN_RE)]
+        parts.append(m[["isin", "yield", "as_of", "source"]])
+    if not sec_hist.empty:
+        s = sec_hist[sec_hist["isin"].str.match(NABARD_ISIN_RE)]
+        s = s[pd.to_numeric(s["trade_value_cr"], errors="coerce") >= NABARD_MIN_TRADE_CR]
+        parts.append(s[["isin", "yield", "as_of", "source"]])
+    if not parts:
+        return df
+    cand = pd.concat(parts, ignore_index=True)
+    cand["yield"] = pd.to_numeric(cand["yield"], errors="coerce")
+    cand = cand.dropna(subset=["yield", "as_of"])
+
+    mats = df.loc[df["ISIN"].str.match(NABARD_ISIN_RE), ["ISIN", "Maturity Date"]]
+    mats = mats.dropna(subset=["Maturity Date"]).drop_duplicates("ISIN")
+    cand = cand.merge(mats, left_on="isin", right_on="ISIN", how="inner")
+    if cand.empty:
+        return df
+
+    today_ts = pd.Timestamp(today)
+    cand["age"] = (today_ts - cand["as_of"]).dt.days.clip(lower=0)
+    # keep one row per (isin, as_of): the latest source wins ties trivially
+    cand = cand.sort_values(["isin", "as_of"]).drop_duplicates(
+        ["isin", "as_of"], keep="last").reset_index(drop=True)
+
+    target = df["Yield (%)"].notna() & df["Maturity Date"].notna() \
+        & ~df["ISIN"].str.match(NABARD_ISIN_RE)
+    idx = np.flatnonzero(target.to_numpy())
+    if idx.size == 0:
+        return df
+
+    b_mat = df["Maturity Date"].to_numpy(dtype="datetime64[D]")[idx].astype("int64")
+    c_mat = cand["Maturity Date"].to_numpy(dtype="datetime64[D]").astype("int64")
+    gap = np.abs(b_mat[:, None] - c_mat[None, :])                     # bonds × cands
+    cost = gap + NABARD_AGE_WEIGHT * cand["age"].to_numpy()[None, :]
+    cost = np.where(gap <= NABARD_MAX_GAP_DAYS, cost, np.inf)
+    # tie-break on smaller gap: add a sub-unit nudge so equal costs prefer it
+    cost = cost + gap * 1e-6
+    best = cost.argmin(axis=1)
+    ok = np.isfinite(cost[np.arange(idx.size), best])
+    rows = idx[ok]
+    picks = cand.iloc[best[ok]].reset_index(drop=True)
+
+    bond_yld = pd.to_numeric(df["Yield (%)"].iloc[rows], errors="coerce").to_numpy()
+    df.loc[df.index[rows], "Spread (bps)"] = np.round(
+        (bond_yld - picks["yield"].to_numpy()) * 100.0, 0)
+    df.loc[df.index[rows], "NABARD Ref"] = picks["isin"].to_numpy()
+    df.loc[df.index[rows], "NABARD Mat"] = picks["Maturity Date"].to_numpy()
+    df.loc[df.index[rows], "NABARD Yield (%)"] = picks["yield"].to_numpy()
+    df.loc[df.index[rows], "NABARD As of"] = picks["as_of"].to_numpy()
+    df.loc[df.index[rows], "NABARD Src"] = picks["source"].to_numpy()
+    df["Spread (bps)"] = pd.to_numeric(df["Spread (bps)"], errors="coerce")
+    df["NABARD Yield (%)"] = pd.to_numeric(df["NABARD Yield (%)"], errors="coerce")
+    df["NABARD Mat"] = pd.to_datetime(df["NABARD Mat"], errors="coerce")
+    df["NABARD As of"] = pd.to_datetime(df["NABARD As of"], errors="coerce")
+    return df
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def _load_holdings_mix() -> pd.DataFrame:
     """Quarterly investor-category holdings mix per ISIN (NSDL statement).
@@ -1312,6 +1401,11 @@ if not _secondary.empty:
     df.loc[_override, "Src"] = df.loc[_override, "_sec_src"]
     df = df.drop(columns=["_sec_yield", "_sec_as_of", "_sec_src"])
 
+# Spread vs the closest-maturity, freshest NABARD benchmark (see
+# _attach_nabard_spread for the selection rule). Needs Maturity Date + Yield.
+df = _attach_nabard_spread(df, _load_mf_history(), _load_secondary_history(),
+                           date.today())
+
 # ------------------------------------------------------------------ #
 # Latest-rating cross-reference (ratings tool DB)
 # NSDL's Credit Rating field is as filed at issuance and often stale.
@@ -1603,7 +1697,7 @@ with st.sidebar:
     st.markdown("**Sort**")
     sort_col = st.selectbox("Sort by", [
         "Maturity Date", "Issue Date", "Issue Size (Cr)", "Coupon Rate (%)",
-        "Rating", "Issuer", "Days to Maturity", "Yield (%)"
+        "Rating", "Issuer", "Days to Maturity", "Yield (%)", "Spread (bps)"
     ], label_visibility="collapsed", key=f"flt_sort_{_fe}")
     sort_asc = st.radio("Order", ["Ascending", "Descending"], horizontal=True,
                         key=f"flt_order_{_fe}") == "Ascending"
@@ -1681,8 +1775,9 @@ st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
 DISPLAY_COLS = [
     "ISIN", "Issuer", "Coupon Rate (%)", "Coupon Detail", "Issue Date",
     "Maturity Date", "Days to Maturity", "Issue Size (Cr)", "Rating",
-    "Rating Src", "Rated On", "Yield (%)", "As of", "Src", "Holders",
-    "Holders Mix", "Sector"
+    "Rating Src", "Rated On", "Yield (%)", "As of", "Src",
+    "Spread (bps)", "NABARD Ref", "NABARD Mat", "NABARD Yield (%)", "NABARD As of",
+    "Holders", "Holders Mix", "Sector"
 ]
 display_df = filtered[DISPLAY_COLS].copy()
 # ISIN becomes a link into the yield-history view (?isin=...)
@@ -1729,6 +1824,16 @@ st.dataframe(
                                                       help="Date of the MF disclosure or BSE/NSE trade the yield is taken from"),
         "Src":            st.column_config.TextColumn("Src", width="small",
                                                       help="Where the yield comes from: AMC name = MF valuation mark; BSE/NSE = actual exchange trade"),
+        "Spread (bps)":   st.column_config.NumberColumn("Spread (bps)", format="%.0f", width="small",
+                                                        help="Bond yield minus the yield of the NABARD bond chosen as benchmark, in basis points. Benchmark = NABARD bond maturing within ±10 days with the best trade-off of maturity match vs yield freshness (cost = maturity gap in days + 2 × age of the NABARD yield in days, lowest wins). Blank when no NABARD bond matures within ±10 days."),
+        "NABARD Ref":     st.column_config.TextColumn("NABARD Ref", width="small",
+                                                      help="ISIN of the NABARD bond used as the spread benchmark"),
+        "NABARD Mat":     st.column_config.DateColumn("NABARD Mat", format="DD/MM/YYYY", width="small",
+                                                      help="Maturity date of the benchmark NABARD bond"),
+        "NABARD Yield (%)": st.column_config.NumberColumn("NABARD Yld (%)", format="%.2f", width="small",
+                                                          help="Benchmark NABARD yield — MF valuation mark or BSE/NSE trade of ≥ ₹50 cr"),
+        "NABARD As of":   st.column_config.DateColumn("NABARD As of", format="DD/MM/YYYY", width="small",
+                                                      help="Date of the benchmark NABARD yield observation"),
         "Holders":        st.column_config.TextColumn("Holders", width="medium",
                                                       help="Mutual funds holding this bond, with each AMC's total market value in INR crore, e.g. HDFC (50), SBI (100)"),
         "Holders Mix":    st.column_config.TextColumn("Holders Mix (Qtr)", width="medium",
@@ -1746,7 +1851,8 @@ EXPORT_COLS = [
     "Days to Maturity",
     "Issue Size (Cr)", "Rating", "Rating Src", "Rated On", "Rating (NSDL)",
     "Rating (Full)", "Yield (%)", "As of",
-    "Src", "Holders", "Holders Mix", "Holders Mix As Of", "Listing Status",
+    "Src", "Spread (bps)", "NABARD Ref", "NABARD Mat", "NABARD Yield (%)",
+    "NABARD As of", "NABARD Src", "Holders", "Holders Mix", "Holders Mix As Of", "Listing Status",
     "Sector", "PSU", "Issuer Type",
     "Mode of Issue",
 ]
@@ -1754,6 +1860,9 @@ export_df = filtered[[c for c in EXPORT_COLS if c in filtered.columns]].copy()
 export_df["Issue Date"]    = export_df["Issue Date"].dt.strftime("%d/%m/%Y")
 export_df["Maturity Date"] = export_df["Maturity Date"].dt.strftime("%d/%m/%Y")
 export_df["Rated On"]      = export_df["Rated On"].dt.strftime("%d/%m/%Y")
+for _c in ("NABARD Mat", "NABARD As of"):
+    if _c in export_df.columns:
+        export_df[_c] = pd.to_datetime(export_df[_c], errors="coerce").dt.strftime("%d/%m/%Y")
 
 csv_bytes = export_df.to_csv(index=False).encode("utf-8")
 st.download_button(
@@ -1776,7 +1885,10 @@ st.caption(
     "is that AMC's total market value across its schemes in INR crore. Yields "
     "are as per each fund's valuation methodology and are not exchange-traded "
     "levels. Where Src shows BSE/NSE, the yield is a recent exchange trade "
-    "that post-dates the MF mark."
+    "that post-dates the MF mark. Spread (bps) = bond yield minus the yield of "
+    "the NABARD bond maturing within ±10 days that best balances maturity "
+    "match against yield freshness (NABARD Ref / Mat / Yld / As of show the "
+    "benchmark used); blank where no NABARD bond matures within ±10 days."
 )
 
 # ---- Contact footer ----
