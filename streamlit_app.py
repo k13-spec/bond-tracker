@@ -1524,10 +1524,12 @@ def _cols_from_param(raw: str) -> list:
 
 
 _fresh_load = "col_picker" not in st.session_state
+_restoring_cols = False   # True on the one run that asks localStorage
 if _fresh_load:
     _init_cols = _cols_from_param(st.query_params.get("cols", ""))
     st.session_state.col_picker = _init_cols or list(ALL_DISPLAY_COLS)
     if not _init_cols:
+        _restoring_cols = True
         # No ?cols= in the URL: ask the browser whether it remembers one.
         # If it does, reload the page with ?cols= set (one-time bounce).
         components.html(f"""<script>
@@ -1771,7 +1773,10 @@ if _cols_param:
         st.query_params["cols"] = _cols_param
 elif "cols" in st.query_params:
     del st.query_params["cols"]
-components.html(f"""<script>
+# Mirror to localStorage — but NOT on the fresh-load run that is still
+# reading it (the save would race the restore and wipe the stored view).
+if not _restoring_cols:
+    components.html(f"""<script>
 (function () {{
   try {{
     var v = {json.dumps(_cols_param)};
