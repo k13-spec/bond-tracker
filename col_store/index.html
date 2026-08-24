@@ -1,0 +1,29 @@
+<!doctype html>
+<html><body><script>
+// Minimal Streamlit component: get/set one localStorage key.
+// Args: {mode: "get"|"set", name: string, value?: string}
+// "get" returns the stored string ("" if none); "set" stores value
+// (removes when empty) and returns true.
+(function () {
+  function send(type, data) {
+    window.parent.postMessage(Object.assign({isStreamlitMessage: true, type: type}, data || {}), "*");
+  }
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.type !== "streamlit:render") return;
+    var a = e.data.args || {};
+    var out;
+    try {
+      if (a.mode === "set") {
+        if (a.value) window.localStorage.setItem(a.name, a.value);
+        else window.localStorage.removeItem(a.name);
+        out = true;
+      } else {
+        out = window.localStorage.getItem(a.name) || "";
+      }
+    } catch (err) { out = (a.mode === "set") ? true : ""; }
+    send("streamlit:setComponentValue", {value: out, dataType: "json"});
+  });
+  send("streamlit:componentReady", {apiVersion: 1});
+  send("streamlit:setFrameHeight", {height: 0});
+})();
+</script></body></html>

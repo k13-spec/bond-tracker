@@ -20,6 +20,7 @@ import time
 import urllib.parse
 import warnings
 from datetime import date, datetime
+from pathlib import Path
 
 import numpy as np
 import openpyxl
@@ -1499,13 +1500,15 @@ st.divider()
 # Sidebar filters
 # ------------------------------------------------------------------ #
 # ------------------------------------------------------------------ #
-# Column picker — which table columns are shown. Remembered per browser:
-# the choice is mirrored into the URL (?cols=A|B|C) and into a cookie
-# (set by a tiny same-origin JS component); on a fresh load with no
-# ?cols= the cookie is read server-side via st.context.cookies. (An
-# earlier localStorage + reload-with-?cols= design failed: Streamlit's
-# component iframe is sandboxed and may not navigate its parent.)
-# Deliberately NOT epoch-keyed: Reset Filters leaves the column view alone.
+# Column picker — which table columns are shown. Remembered per browser
+# in localStorage through a tiny bidirectional component (col_store/):
+# the "get" instance (below) reports the stored value to Python on first
+# render, the "set" instance (after the sidebar) writes the current choice.
+# The choice is also mirrored into the URL (?cols=A|B|C) so a view can be
+# bookmarked/shared. Deliberately NOT epoch-keyed: Reset Filters leaves
+# the column view alone. (Earlier attempts: reload-with-?cols= from a
+# components.html iframe is blocked by the iframe sandbox; a cookie is not
+# forwarded to the server by Streamlit Cloud's proxy.)
 # ------------------------------------------------------------------ #
 ALL_DISPLAY_COLS = [
     "ISIN", "Issuer", "Coupon Rate (%)", "Coupon Detail", "Issue Date",
@@ -1518,25 +1521,27 @@ CORE_DISPLAY_COLS = [
     "ISIN", "Issuer", "Coupon Rate (%)", "Maturity Date", "Issue Size (Cr)",
     "Rating", "Yield (%)", "As of", "Spread (bps)", "Holders",
 ]
-_COLS_COOKIE = "bt_visible_cols"   # cookie name (per browser, 1-year expiry)
+_COLS_LS_KEY = "bt_visible_cols"   # localStorage key (per browser)
+_col_store = components.declare_component(
+    "bt_col_store", path=str(Path(__file__).parent / "col_store"))
 
 
 def _cols_from_param(raw: str) -> list:
     return [c for c in raw.split("|") if c in ALL_DISPLAY_COLS] if raw else []
 
 
-def _cols_from_cookie() -> list:
-    try:
-        raw = st.context.cookies.get(_COLS_COOKIE, "")
-    except Exception:
-        raw = ""
-    return _cols_from_param(urllib.parse.unquote(raw)) if raw else []
-
-
 if "col_picker" not in st.session_state:
-    _init_cols = (_cols_from_param(st.query_params.get("cols", ""))
-                  or _cols_from_cookie())
-    st.session_state.col_picker = _init_cols or list(ALL_DISPLAY_COLS)
+    st.session_state.col_picker = (_cols_from_param(st.query_params.get("cols", ""))
+                                   or list(ALL_DISPLAY_COLS))
+    st.session_state.cols_restored = "cols" in st.query_params
+if not st.session_state.get("cols_restored"):
+    # Ask the browser what it remembers; None until the component reports.
+    _stored = _col_store(mode="get", name=_COLS_LS_KEY, default=None, key="col_store_get")
+    if _stored is not None:
+        st.session_state.cols_restored = True
+        _stored_cols = _cols_from_param(str(_stored))
+        if _stored_cols:
+            st.session_state.col_picker = _stored_cols
 
 with st.sidebar:
     st.header("Filters")
@@ -1766,16 +1771,11 @@ if _cols_param:
         st.query_params["cols"] = _cols_param
 elif "cols" in st.query_params:
     del st.query_params["cols"]
-# Mirror the choice into a 1-year cookie so the next visit starts from it.
-components.html(f"""<script>
-(function () {{
-  try {{
-    var v = {json.dumps(urllib.parse.quote(_cols_param, safe=""))};
-    var base = {json.dumps(_COLS_COOKIE)} + "=" + v + "; path=/; SameSite=Lax; Secure";
-    document.cookie = base + (v ? "; max-age=31536000" : "; max-age=0");
-  }} catch (e) {{}}
-}})();
-</script>""", height=0)
+# Persist to localStorage once the stored value has been consulted (never
+# before, or a default "all" would overwrite the remembered view).
+if st.session_state.get("cols_restored"):
+    _col_store(mode="set", name=_COLS_LS_KEY, value=_cols_param, default=True,
+               key="col_store_set")
 
 
 # ------------------------------------------------------------------ #
