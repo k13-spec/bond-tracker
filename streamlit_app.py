@@ -26,6 +26,7 @@ import openpyxl
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ------------------------------------------------------------------ #
 # Page config
@@ -1497,6 +1498,51 @@ st.divider()
 # ------------------------------------------------------------------ #
 # Sidebar filters
 # ------------------------------------------------------------------ #
+# ------------------------------------------------------------------ #
+# Column picker — which table columns are shown. Remembered per browser:
+# the choice is mirrored into the URL (?cols=A|B|C) and into
+# localStorage; on a fresh load with no ?cols= the tiny JS component
+# below restores it from localStorage by reloading with ?cols= set.
+# Deliberately NOT epoch-keyed: Reset Filters leaves the column view alone.
+# ------------------------------------------------------------------ #
+ALL_DISPLAY_COLS = [
+    "ISIN", "Issuer", "Coupon Rate (%)", "Coupon Detail", "Issue Date",
+    "Maturity Date", "Days to Maturity", "Issue Size (Cr)", "Rating",
+    "Rating Src", "Rated On", "Yield (%)", "As of", "Src",
+    "Spread (bps)", "NABARD Ref", "NABARD Mat", "NABARD Yield (%)", "NABARD As of",
+    "Holders", "Holders Mix", "Sector"
+]
+CORE_DISPLAY_COLS = [
+    "ISIN", "Issuer", "Coupon Rate (%)", "Maturity Date", "Issue Size (Cr)",
+    "Rating", "Yield (%)", "As of", "Spread (bps)", "Holders",
+]
+_COLS_LS_KEY = "bt_visible_cols"   # localStorage key (per browser)
+
+
+def _cols_from_param(raw: str) -> list:
+    return [c for c in raw.split("|") if c in ALL_DISPLAY_COLS] if raw else []
+
+
+_fresh_load = "col_picker" not in st.session_state
+if _fresh_load:
+    _init_cols = _cols_from_param(st.query_params.get("cols", ""))
+    st.session_state.col_picker = _init_cols or list(ALL_DISPLAY_COLS)
+    if not _init_cols:
+        # No ?cols= in the URL: ask the browser whether it remembers one.
+        # If it does, reload the page with ?cols= set (one-time bounce).
+        components.html(f"""<script>
+(function () {{
+  try {{
+    var saved = window.localStorage.getItem({json.dumps(_COLS_LS_KEY)});
+    if (!saved) return;
+    var url = new URL(window.parent.location.href);
+    if (url.searchParams.get("cols")) return;
+    url.searchParams.set("cols", saved);
+    window.parent.location.replace(url.toString());
+  }} catch (e) {{}}
+}})();
+</script>""", height=0)
+
 with st.sidebar:
     st.header("Filters")
 
@@ -1702,6 +1748,39 @@ with st.sidebar:
     sort_asc = st.radio("Order", ["Ascending", "Descending"], horizontal=True,
                         key=f"flt_order_{_fe}") == "Ascending"
 
+    # ---- Columns ----
+    with st.expander("Columns", expanded=False):
+        st.caption("Choose which columns the table shows. Remembered in this "
+                   "browser for next time. The CSV export always has every column.")
+        _cb1, _cb2 = st.columns(2)
+        if _cb1.button("All", use_container_width=True, key="cols_all"):
+            st.session_state.col_picker = list(ALL_DISPLAY_COLS)
+        if _cb2.button("Core", use_container_width=True, key="cols_core",
+                       help="ISIN, Issuer, Coupon, Maturity, Size, Rating, Yield, As of, Spread, Holders"):
+            st.session_state.col_picker = list(CORE_DISPLAY_COLS)
+        visible_cols = st.multiselect(
+            "Visible columns", ALL_DISPLAY_COLS, key="col_picker",
+            label_visibility="collapsed",
+        )
+
+# Resolve + persist the column choice (blank selection = show everything)
+visible_cols = [c for c in ALL_DISPLAY_COLS if c in (visible_cols or ALL_DISPLAY_COLS)]
+_cols_param = "|".join(visible_cols) if len(visible_cols) < len(ALL_DISPLAY_COLS) else ""
+if _cols_param:
+    if st.query_params.get("cols", "") != _cols_param:
+        st.query_params["cols"] = _cols_param
+elif "cols" in st.query_params:
+    del st.query_params["cols"]
+components.html(f"""<script>
+(function () {{
+  try {{
+    var v = {json.dumps(_cols_param)};
+    if (v) window.localStorage.setItem({json.dumps(_COLS_LS_KEY)}, v);
+    else window.localStorage.removeItem({json.dumps(_COLS_LS_KEY)});
+  }} catch (e) {{}}
+}})();
+</script>""", height=0)
+
 
 # ------------------------------------------------------------------ #
 # Apply filters
@@ -1772,25 +1851,22 @@ filtered = filtered.sort_values(sort_col, ascending=sort_asc, na_position="last"
 # ------------------------------------------------------------------ #
 st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
 
-DISPLAY_COLS = [
-    "ISIN", "Issuer", "Coupon Rate (%)", "Coupon Detail", "Issue Date",
-    "Maturity Date", "Days to Maturity", "Issue Size (Cr)", "Rating",
-    "Rating Src", "Rated On", "Yield (%)", "As of", "Src",
-    "Spread (bps)", "NABARD Ref", "NABARD Mat", "NABARD Yield (%)", "NABARD As of",
-    "Holders", "Holders Mix", "Sector"
-]
+DISPLAY_COLS = visible_cols          # user's column choice (sidebar → Columns)
 display_df = filtered[DISPLAY_COLS].copy()
 # ISIN becomes a link into the yield-history view (?isin=...)
-display_df["ISIN"] = display_df["ISIN"].apply(
-    lambda i: f"{APP_BASE_URL}/?isin={i}"
-)
+if "ISIN" in display_df.columns:
+    display_df["ISIN"] = display_df["ISIN"].apply(
+        lambda i: f"{APP_BASE_URL}/?isin={i}"
+    )
 # Dates and sizes keep their native dtypes (datetime64 / float) so that
 # clicking a column header sorts chronologically / numerically — the old
 # code formatted them into dd/mm/yyyy and "1,234.00" strings, which made
 # header-click sorting lexicographic and effectively random.
-display_df["As of"] = pd.to_datetime(display_df["As of"],
-                                     format="%d/%m/%Y", errors="coerce")
-display_df["Holders"] = display_df["Holders"].str.replace("; ", ", ", regex=False)
+if "As of" in display_df.columns:
+    display_df["As of"] = pd.to_datetime(display_df["As of"],
+                                         format="%d/%m/%Y", errors="coerce")
+if "Holders" in display_df.columns:
+    display_df["Holders"] = display_df["Holders"].str.replace("; ", ", ", regex=False)
 
 st.dataframe(
     display_df,
