@@ -1,8 +1,11 @@
-# On-demand refresh of BSE/NSE secondary-market trade yields.
+# Daily refresh of BSE/NSE secondary-market trade yields.
 #
-# Triggered from the dashboard's "⟳ Refresh Secondary Trades" button
-# (workflow_dispatch via the GitHub API using the GH_WORKFLOW_TOKEN in
-# Streamlit secrets), or manually from this repo's Actions tab.
+# Runs every morning at 06:45 IST (01:15 UTC) so the dashboard shows all
+# trades up to the previous trading day (maintainer decision 2026-09-02;
+# previously on-demand only). Weekend/holiday runs find nothing new and
+# make no commit. Also still triggerable from the dashboard's
+# "⟳ Refresh Secondary Trades" button (workflow_dispatch via the GitHub App
+# token) or manually from this repo's Actions tab.
 #
 # Window: from the last refresh date recorded in data/secondary_meta.json
 # (with a 1-day overlap), or the last 30 days on first run — per the spec,
@@ -21,6 +24,8 @@
 name: Secondary trades refresh
 
 on:
+  schedule:
+    - cron: "15 1 * * *"   # 06:45 IST daily; off-peak minute to dodge cron jitter
   workflow_dispatch:
     inputs:
       from_date:
@@ -30,6 +35,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: secondary-trades-refresh
+  cancel-in-progress: false
 
 jobs:
   refresh:
@@ -85,6 +94,7 @@ jobs:
           fi
           N=$(grep -oP 'wrote trades_new.csv: \K\d+' fetch_log.txt || echo "?")
           git commit -m "Secondary trades refresh ${{ steps.window.outputs.from }} -> ${{ steps.window.outputs.to }} (${N} isin-date rows >= 1cr)"
+          git pull --rebase origin main
           git push
 
       - name: Job summary
