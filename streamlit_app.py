@@ -1309,8 +1309,8 @@ def _render_yield_history(isin: str) -> None:
         _nab = _nab.sort_values(["mat", "isin"], na_position="last")
 
     def _nab_label(r):
-        mat = f" ┬╖ {r['mat']:%d/%m/%Y}" if pd.notna(r["mat"]) else ""
-        gap = f" ┬╖ ╬ö{int(r['gap'])}d" if pd.notna(r["gap"]) else ""
+        mat = f" · {r['mat']:%d/%m/%Y}" if pd.notna(r["mat"]) else ""
+        gap = f" · Δ{int(r['gap'])}d" if pd.notna(r["gap"]) else ""
         return f"{r['isin']}{mat}{gap}"
 
     _nab_opts = {_nab_label(r): r["isin"] for _, r in _nab.iterrows()}
@@ -1319,17 +1319,17 @@ def _render_yield_history(isin: str) -> None:
     oc1, oc2 = st.columns(2)
     _typed = oc1.text_input(
         "Overlay another ISIN", value=_qp_overlay, placeholder="e.g. INE261F08691",
-        help="Plot a second bond's yield history on the same chart ΓÇö e.g. the "
+        help="Plot a second bond's yield history on the same chart — e.g. the "
              "closest-maturity NABARD benchmark. Any ISIN with MF-mark or BSE/NSE "
              "trade history works. Typed ISIN takes precedence over the picker.",
     ).strip().upper()
     _pick = oc2.selectbox(
-        "ΓÇªor pick a NABARD benchmark (closest maturity first)",
-        options=["ΓÇö"] + list(_nab_opts.keys()), index=0,
-        help="NABARD bonds with yield history, sorted by maturity gap (╬ö days) "
+        "…or pick a NABARD benchmark (closest maturity first)",
+        options=["—"] + list(_nab_opts.keys()), index=0,
+        help="NABARD bonds with yield history, sorted by maturity gap (Δ days) "
              "to this bond where its maturity is known.",
     )
-    overlay = _typed or (_nab_opts.get(_pick, "") if _pick != "ΓÇö" else "")
+    overlay = _typed or (_nab_opts.get(_pick, "") if _pick != "—" else "")
     if overlay == isin:
         overlay = ""
     if overlay:
@@ -1351,8 +1351,8 @@ def _render_yield_history(isin: str) -> None:
             if _c not in ho.columns:
                 ho[_c] = float("nan")
         if ho.empty:
-            st.warning(f"No yield history found for {overlay} ΓÇö it needs at least "
-                       "one MF mark or a ΓëÑΓé╣1cr BSE/NSE trade.")
+            st.warning(f"No yield history found for {overlay} — it needs at least "
+                       "one MF mark or a ≥₹1cr BSE/NSE trade.")
         else:
             ho["series"] = overlay
             _orow = meta[meta["isin"] == overlay]
@@ -1363,13 +1363,13 @@ def _render_yield_history(isin: str) -> None:
             sp = (latest["yield"] - ol["yield"]) * 100
             k1, k2, k3 = st.columns(3)
             k1.metric(f"Overlay latest ({overlay})", f"{ol['yield']:.2f}%",
-                      help=f"{_oname or overlay} ┬╖ as of {ol['as_of']:%d %b %Y} ({ol['source']})")
+                      help=f"{_oname or overlay} · as of {ol['as_of']:%d %b %Y} ({ol['source']})")
             k2.metric("Spread vs overlay (latest)", f"{sp:+.0f} bps",
                       help=f"{isin} {latest['yield']:.2f}% ({latest['as_of']:%d %b %Y}) minus "
-                           f"{overlay} {ol['yield']:.2f}% ({ol['as_of']:%d %b %Y}) ΓÇö "
+                           f"{overlay} {ol['yield']:.2f}% ({ol['as_of']:%d %b %Y}) — "
                            "latest observations, which may be on different dates")
             k3.metric("Overlay data points", f"{len(ho)}",
-                      help=f"{ho.iloc[0]['as_of']:%d %b %Y} ΓåÆ {ol['as_of']:%d %b %Y}")
+                      help=f"{ho.iloc[0]['as_of']:%d %b %Y} → {ol['as_of']:%d %b %Y}")
 
     plot = pd.concat([h, ho], ignore_index=True) if not ho.empty else h
     plot = plot.assign(**{"Yield (%)": plot["yield"]})
@@ -1395,7 +1395,7 @@ def _render_yield_history(isin: str) -> None:
     )
     st.altair_chart(chart, use_container_width=True)
     if len(h) == 1:
-        st.caption("One data point so far ΓÇö the trendline builds up with every "
+        st.caption("One data point so far — the trendline builds up with every "
                    "fortnightly disclosure (5th and 20th of each month).")
 
     shown = plot.drop(columns=["Yield (%)"]).rename(columns={"as_of": "As of", "yield": "Yield (%)",
@@ -1404,8 +1404,8 @@ def _render_yield_history(isin: str) -> None:
     shown = shown.sort_values("As of")
     shown["As of"] = shown["As of"].dt.strftime("%d/%m/%Y")
     shown["Trade Value (Cr)"] = shown["trade_value_cr"].apply(
-        lambda x: f"{x:,.2f}" if pd.notna(x) else "ΓÇö")
-    shown["Holders"] = shown["Holders"].fillna("ΓÇö")
+        lambda x: f"{x:,.2f}" if pd.notna(x) else "—")
+    shown["Holders"] = shown["Holders"].fillna("—")
     _cols = (["ISIN"] if not ho.empty else []) + ["As of", "Yield (%)", "Source",
                                                   "Trade Value (Cr)", "Holders"]
     st.dataframe(shown[_cols].iloc[::-1], hide_index=True, use_container_width=True)
