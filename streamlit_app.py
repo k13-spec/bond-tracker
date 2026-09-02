@@ -1287,15 +1287,105 @@ def _render_yield_history(isin: str) -> None:
               f"{len(str(latest['holders']).split(';'))}" if pd.notna(latest["holders"]) else "0",
               help=str(latest["holders"]))
 
+    # ---- Overlay: compare against another ISIN (e.g. a NABARD benchmark) ----
+    _mat_re = re.compile(r"\((\d{2}/\d{2}/\d{4})\)")
+
+    def _mat_of(n):
+        m = _mat_re.search(str(n or ""))
+        return (pd.to_datetime(m.group(1), format="%d/%m/%Y", errors="coerce")
+                if m else pd.NaT)
+
+    _my_mat = _mat_of(name)
+    _hist_isins = set(mf_hist["isin"]) | set(sec_hist["isin"])
+    _nab = meta[meta["isin"].str.match(NABARD_ISIN_RE)
+                & meta["isin"].isin(_hist_isins)
+                & (meta["isin"] != isin)].copy()
+    _nab["mat"] = _nab["instrument_name"].apply(_mat_of)
+    if pd.notna(_my_mat):
+        _nab["gap"] = (_nab["mat"] - _my_mat).abs().dt.days
+        _nab = _nab.sort_values(["gap", "isin"], na_position="last")
+    else:
+        _nab["gap"] = float("nan")
+        _nab = _nab.sort_values(["mat", "isin"], na_position="last")
+
+    def _nab_label(r):
+        mat = f" ┬╖ {r['mat']:%d/%m/%Y}" if pd.notna(r["mat"]) else ""
+        gap = f" ┬╖ ╬ö{int(r['gap'])}d" if pd.notna(r["gap"]) else ""
+        return f"{r['isin']}{mat}{gap}"
+
+    _nab_opts = {_nab_label(r): r["isin"] for _, r in _nab.iterrows()}
+
+    _qp_overlay = st.query_params.get("overlay", "").strip().upper()
+    oc1, oc2 = st.columns(2)
+    _typed = oc1.text_input(
+        "Overlay another ISIN", value=_qp_overlay, placeholder="e.g. INE261F08691",
+        help="Plot a second bond's yield history on the same chart ΓÇö e.g. the "
+             "closest-maturity NABARD benchmark. Any ISIN with MF-mark or BSE/NSE "
+             "trade history works. Typed ISIN takes precedence over the picker.",
+    ).strip().upper()
+    _pick = oc2.selectbox(
+        "ΓÇªor pick a NABARD benchmark (closest maturity first)",
+        options=["ΓÇö"] + list(_nab_opts.keys()), index=0,
+        help="NABARD bonds with yield history, sorted by maturity gap (╬ö days) "
+             "to this bond where its maturity is known.",
+    )
+    overlay = _typed or (_nab_opts.get(_pick, "") if _pick != "ΓÇö" else "")
+    if overlay == isin:
+        overlay = ""
+    if overlay:
+        st.query_params["overlay"] = overlay
+    elif "overlay" in st.query_params:
+        del st.query_params["overlay"]
+
+    h["series"] = isin
+    ho = pd.DataFrame()
+    if overlay:
+        om = mf_hist[mf_hist["isin"] == overlay].copy()
+        os_ = sec_hist[sec_hist["isin"] == overlay].copy()
+        if not om.empty:
+            om["kind"] = om["source"].astype(str)
+        if not os_.empty:
+            os_["kind"] = os_["source"].astype(str) + " trade"
+        ho = pd.concat([om, os_], ignore_index=True).sort_values("as_of")
+        for _c in ("holders", "trade_value_cr", "kind"):
+            if _c not in ho.columns:
+                ho[_c] = float("nan")
+        if ho.empty:
+            st.warning(f"No yield history found for {overlay} ΓÇö it needs at least "
+                       "one MF mark or a ΓëÑΓé╣1cr BSE/NSE trade.")
+        else:
+            ho["series"] = overlay
+            _orow = meta[meta["isin"] == overlay]
+            _oname = (str(_orow["instrument_name"].iloc[0])
+                      if not _orow.empty and pd.notna(_orow["instrument_name"].iloc[0])
+                      else "")
+            ol = ho.iloc[-1]
+            sp = (latest["yield"] - ol["yield"]) * 100
+            k1, k2, k3 = st.columns(3)
+            k1.metric(f"Overlay latest ({overlay})", f"{ol['yield']:.2f}%",
+                      help=f"{_oname or overlay} ┬╖ as of {ol['as_of']:%d %b %Y} ({ol['source']})")
+            k2.metric("Spread vs overlay (latest)", f"{sp:+.0f} bps",
+                      help=f"{isin} {latest['yield']:.2f}% ({latest['as_of']:%d %b %Y}) minus "
+                           f"{overlay} {ol['yield']:.2f}% ({ol['as_of']:%d %b %Y}) ΓÇö "
+                           "latest observations, which may be on different dates")
+            k3.metric("Overlay data points", f"{len(ho)}",
+                      help=f"{ho.iloc[0]['as_of']:%d %b %Y} ΓåÆ {ol['as_of']:%d %b %Y}")
+
+    plot = pd.concat([h, ho], ignore_index=True) if not ho.empty else h
+    plot = plot.assign(**{"Yield (%)": plot["yield"]})
+    _domain = [isin] + ([overlay] if not ho.empty else [])
     chart = (
-        alt.Chart(h.assign(**{"Yield (%)": h["yield"]}))
-        .mark_line(color="#6366F1", strokeWidth=2.5,
-                   point=alt.OverlayMarkDef(size=90, filled=True, color="#4F46E5"))
+        alt.Chart(plot)
+        .mark_line(strokeWidth=2.5, point=alt.OverlayMarkDef(size=90, filled=True))
         .encode(
             x=alt.X("as_of:T", title="Date",
                     axis=alt.Axis(format="%d %b %y", labelAngle=0)),
             y=alt.Y("Yield (%):Q", scale=alt.Scale(zero=False)),
+            color=alt.Color("series:N", title=None,
+                            scale=alt.Scale(domain=_domain, range=["#6366F1", "#F59E0B"]),
+                            legend=alt.Legend(orient="top") if not ho.empty else None),
             tooltip=[
+                alt.Tooltip("series:N", title="ISIN"),
                 alt.Tooltip("as_of:T", title="As of", format="%d %b %Y"),
                 alt.Tooltip("Yield (%):Q", format=".2f"),
                 alt.Tooltip("kind:N", title="Source"),
@@ -1305,17 +1395,20 @@ def _render_yield_history(isin: str) -> None:
     )
     st.altair_chart(chart, use_container_width=True)
     if len(h) == 1:
-        st.caption("One data point so far — the trendline builds up with every "
+        st.caption("One data point so far ΓÇö the trendline builds up with every "
                    "fortnightly disclosure (5th and 20th of each month).")
 
-    shown = h.rename(columns={"as_of": "As of", "yield": "Yield (%)",
-                              "kind": "Source", "holders": "Holders"})
+    shown = plot.drop(columns=["Yield (%)"]).rename(columns={"as_of": "As of", "yield": "Yield (%)",
+                                 "kind": "Source", "holders": "Holders",
+                                 "series": "ISIN"})
+    shown = shown.sort_values("As of")
     shown["As of"] = shown["As of"].dt.strftime("%d/%m/%Y")
     shown["Trade Value (Cr)"] = shown["trade_value_cr"].apply(
-        lambda x: f"{x:,.2f}" if pd.notna(x) else "—")
-    shown["Holders"] = shown["Holders"].fillna("—")
-    st.dataframe(shown[["As of", "Yield (%)", "Source", "Trade Value (Cr)", "Holders"]]
-                 .iloc[::-1], hide_index=True, use_container_width=True)
+        lambda x: f"{x:,.2f}" if pd.notna(x) else "ΓÇö")
+    shown["Holders"] = shown["Holders"].fillna("ΓÇö")
+    _cols = (["ISIN"] if not ho.empty else []) + ["As of", "Yield (%)", "Source",
+                                                  "Trade Value (Cr)", "Holders"]
+    st.dataframe(shown[_cols].iloc[::-1], hide_index=True, use_container_width=True)
 
 
 _qp_isin = st.query_params.get("isin", "").strip().upper()
