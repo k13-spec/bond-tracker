@@ -1,0 +1,89 @@
+# One-off / on-demand backfill of BSE/NSE secondary-market trade yields into
+# data/secondary_yields_history.csv (maintainer request 2026-09-13: history
+# back to 1 Jan 2026 without re-fetching dates already in the database).
+#
+# Triggers:
+#   * push of this file or backfill_secondary.py -> runs with defaults
+#     (start 2026-01-01, end = day before the earliest date in history), so
+#     merging the change is enough to kick off the first run;
+#   * workflow_dispatch with optional from/to dates for targeted re-runs.
+#
+# Never touches secondary_yields.csv (latest) or secondary_meta.json, so the
+# dashboard's governing yields and "last refreshed" stamp are unaffected; the
+# per-ISIN trendline simply gains older points. Safe to re-run: chunks already
+# in history are skipped and existing (isin, date) rows are never overwritten.
+
+name: Secondary trades backfill
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/secondary-trades-backfill.yml
+      - backfill_secondary.py
+  workflow_dispatch:
+    inputs:
+      from_date:
+        description: "Start YYYY-MM-DD (blank = 2026-01-01)"
+        required: false
+        default: ""
+      to_date:
+        description: "End YYYY-MM-DD (blank = day before earliest date already in history)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: secondary-trades-refresh   # never race the daily refresh on the same files
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests pandas
+
+      - name: Backfill history
+        env:
+          FROM_INPUT: ${{ github.event.inputs.from_date }}
+          TO_INPUT: ${{ github.event.inputs.to_date }}
+        run: |
+          ARGS=""
+          [ -n "$FROM_INPUT" ] && ARGS="$ARGS --start $FROM_INPUT"
+          [ -n "$TO_INPUT" ]   && ARGS="$ARGS --end $TO_INPUT"
+          python backfill_secondary.py $ARGS 2>&1 | tee backfill_log.txt
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/secondary_yields_history.csv
+          if git diff --cached --quiet; then
+            echo "No changes."
+            exit 0
+          fi
+          W=$(grep -oP 'backfill window: \K.*' backfill_log.txt || echo "?")
+          N=$(cat backfill_added.txt 2>/dev/null || echo "?")
+          git commit -m "Secondary trades backfill ${W} (+${N} history rows)"
+          git pull --rebase origin main
+          git push
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Secondary trades backfill"
+            echo '```'
+            cat backfill_log.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
