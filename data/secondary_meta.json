@@ -1,1 +1,58 @@
-{"last_refresh": "2026-10-01T18:03:07+05:30"}
+{
+ "last_refresh": "2026-10-01T18:37:15+05:30",
+ "last_trade_date": "2026-09-22",
+ "last_fetch": {
+  "window": [
+   "2026-09-22",
+   "2026-10-01"
+  ],
+  "raw_rows": 0,
+  "rows": 0,
+  "failed_chunks": 0,
+  "ok": false,
+  "attempts": [
+   {
+    "attempt": 0,
+    "status": 403,
+    "server": "",
+    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
+    "at": "2026-10-01T13:05:14Z"
+   },
+   {
+    "attempt": 1,
+    "status": 403,
+    "server": "",
+    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
+    "at": "2026-10-01T13:05:19Z"
+   },
+   {
+    "attempt": 2,
+    "status": 403,
+    "server": "",
+    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
+    "at": "2026-10-01T13:05:29Z"
+   },
+   {
+    "attempt": 0,
+    "status": 403,
+    "server": "",
+    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
+    "at": "2026-10-01T13:05:45Z"
+   },
+   {
+    "attempt": 1,
+    "status": 403,
+    "server": "",
+    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
+    "at": "2026-10-01T13:05:50Z"
+   },
+   {
+    "attempt": 2,
+    "status": 403,
+    "server": "",
+    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
+    "at": "2026-10-01T13:06:00Z"
+   }
+  ]
+ }
+}
