@@ -83,9 +83,24 @@ def main() -> int:
     print(f"latest: {len(latest)} ISINs (pruned {n_before_prune - len(latest)} older than {cutoff})")
 
     # ---- meta ---------------------------------------------------------------
-    meta_path.write_text(json.dumps(
-        {"last_refresh": datetime.now(IST).isoformat(timespec="seconds")}) + "\n")
-    print(f"meta: last_refresh updated -> {meta_path}")
+    # last_refresh   = this run's time (sidebar caption)
+    # last_trade_date = newest as_of held in history — the honest "data as of";
+    #                   diverges from last_refresh when the BSE API is down
+    # last_fetch     = fetcher diagnostics (window, row counts, HTTP errors) so
+    #                   a silent outage is visible in the repo without run logs
+    meta = {
+        "last_refresh": datetime.now(IST).isoformat(timespec="seconds"),
+        "last_trade_date": str(hist["as_of"].max()) if len(hist) else None,
+    }
+    diag_path = Path("fetch_diag.json")
+    if diag_path.exists():
+        try:
+            meta["last_fetch"] = json.loads(diag_path.read_text())
+        except Exception as e:                     # never let diagnostics break the run
+            meta["last_fetch"] = {"error": f"unreadable fetch_diag.json: {e}"}
+    meta_path.write_text(json.dumps(meta, indent=1) + "\n")
+    print(f"meta: last_refresh updated, last_trade_date={meta['last_trade_date']}, "
+          f"fetch ok={meta.get('last_fetch', {}).get('ok')} -> {meta_path}")
     return 0
 
 
