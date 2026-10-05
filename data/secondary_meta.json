@@ -1,57 +1,28 @@
 {
- "last_refresh": "2026-10-05T12:36:15+05:30",
- "last_trade_date": "2026-09-22",
+ "last_refresh": "2026-10-05T19:09:00+05:30",
+ "last_trade_date": "2026-10-01",
  "last_fetch": {
   "window": [
    "2026-09-22",
    "2026-10-05"
   ],
-  "raw_rows": 0,
-  "rows": 0,
+  "raw_rows": 8550,
+  "rows": 2479,
   "failed_chunks": 0,
-  "ok": false,
+  "ok": true,
+  "transport_used": "curl_cffi",
   "attempts": [
    {
-    "attempt": 0,
+    "transport": "requests",
     "status": 403,
     "server": "",
     "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
-    "at": "2026-10-05T07:04:14Z"
+    "at": "2026-10-05T13:38:53Z"
    },
    {
-    "attempt": 1,
-    "status": 403,
-    "server": "",
-    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
-    "at": "2026-10-05T07:04:19Z"
-   },
-   {
-    "attempt": 2,
-    "status": 403,
-    "server": "",
-    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
-    "at": "2026-10-05T07:04:29Z"
-   },
-   {
-    "attempt": 0,
-    "status": 403,
-    "server": "",
-    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
-    "at": "2026-10-05T07:04:44Z"
-   },
-   {
-    "attempt": 1,
-    "status": 403,
-    "server": "",
-    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
-    "at": "2026-10-05T07:04:49Z"
-   },
-   {
-    "attempt": 2,
-    "status": 403,
-    "server": "",
-    "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
-    "at": "2026-10-05T07:04:59Z"
+    "transport": "curl_cffi",
+    "ok": true,
+    "at": "2026-10-05T13:38:59Z"
    }
   ]
  }
