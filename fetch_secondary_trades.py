@@ -16,7 +16,22 @@ Output columns: isin, yield, as_of (YYYY-MM-DD), source (BSE/NSE),
 trade_value_cr — one row per (isin, as_of): the row with the largest
 trade value that day (so a bigger BSE aggregate beats a smaller NSE one).
 Rows below MIN_TRADE_CR (odd-lot retail noise) are dropped.
+
+Transport (2026-10-05): Akamai in front of api.bseindia.com started 403-ing
+the GitHub runner's requests on ~23 Sep; the 2026-10-01 browser-header fix
+did not help, so the block is on the TLS fingerprint (python-requests') or
+IP reputation, not headers. get_json() now tries, in order, remembering the
+first transport that works for subsequent calls:
+  1. plain requests  (works locally / wherever we are not bot-flagged)
+  2. curl_cffi with Chrome TLS impersonation (defeats TLS fingerprinting;
+     installed at runtime if the workflow's install step predates this fix)
+  3. curl_cffi with an Akamai cookie-priming visit to bseindia.com first
+Every failure is recorded in the diagnostics that update_secondary.py folds
+into data/secondary_meta.json["last_fetch"], so if all three 403 (= hard IP
+block), the meta file says so and the remaining options are a self-hosted /
+local run or a different data source.
 """
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -26,9 +41,8 @@ import requests
 
 API = ("https://api.bseindia.com/BseIndiaAPI/api/"
        "Mkt_Debt_Trade_SecondaryMarket_beta/w")
-# Full browser-like header set (2026-10-01: BSE stopped answering the runner's
-# requests on ~23 Sep; the old minimal UA/Referer pair may have tripped the
-# bot filter; this mirrors what Chrome sends from the trade_repository page).
+HOMEPAGE = "https://www.bseindia.com/"
+# Full browser-like header set for the plain-requests transport.
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                    "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -46,6 +60,13 @@ HEADERS = {
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"Windows"',
 }
+# For curl_cffi, impersonation supplies UA/sec-ch/TLS itself — only add what
+# the page's own XHR adds. Overriding the UA would desync it from the TLS hello.
+CFFI_HEADERS = {
+    "Referer": "https://www.bseindia.com/",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 MIN_TRADE_CR = 1.0        # ignore trades below ₹1 crore (= 100 lacs)
 CHUNK_DAYS = 31           # one API call per ~month when the window has grown
 DIAG = []                 # per-attempt diagnostics, folded into secondary_meta.json
@@ -59,33 +80,106 @@ def _note(**kw):
     print(f"  diag: {kw}", file=sys.stderr)
 
 
+# --------------------------- transports -------------------------------------
+
+_curl_cffi_ready = None      # None = not yet checked
+_cffi_session = None         # cookie-primed curl_cffi session, built lazily
+_preferred = None            # first transport that worked this run
+
+
+def _ensure_curl_cffi():
+    """Import curl_cffi, pip-installing it at runtime if the environment's
+    install step predates this fix. Fails soft: requests transport still runs."""
+    global _curl_cffi_ready
+    if _curl_cffi_ready is not None:
+        return _curl_cffi_ready
+    try:
+        import curl_cffi  # noqa: F401
+        _curl_cffi_ready = True
+        return True
+    except ImportError:
+        pass
+    try:
+        print("  installing curl_cffi (runtime bootstrap)...", file=sys.stderr)
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
+                               "curl_cffi"])
+        import curl_cffi  # noqa: F401
+        _curl_cffi_ready = True
+    except Exception as e:
+        _note(transport="curl_cffi", error=f"install failed: "
+              f"{type(e).__name__}: {str(e)[:150]}")
+        _curl_cffi_ready = False
+    return _curl_cffi_ready
+
+
+def _check(r, transport):
+    """Shared response handling: note non-200s and non-JSON, return parsed JSON."""
+    if r.status_code != 200:
+        _note(transport=transport, status=r.status_code,
+              server=r.headers.get("Server", ""),
+              body=r.text[:200].replace("\n", " "))
+        r.raise_for_status()
+    try:
+        return r.json()
+    except ValueError:
+        _note(transport=transport, status=r.status_code, error="non-JSON body",
+              ctype=r.headers.get("Content-Type", ""),
+              body=r.text[:200].replace("\n", " "))
+        raise
+
+
+def _requests_get(params):
+    r = requests.get(API, params=params, headers=HEADERS, timeout=90)
+    return _check(r, "requests")
+
+
+def _cffi_get(params):
+    from curl_cffi import requests as creq
+    r = creq.get(API, params=params, headers=CFFI_HEADERS,
+                 impersonate="chrome", timeout=90)
+    return _check(r, "curl_cffi")
+
+
+def _cffi_primed_get(params):
+    """Akamai sets bot-manager cookies on the site page; carry them to the API."""
+    global _cffi_session
+    from curl_cffi import requests as creq
+    if _cffi_session is None:
+        s = creq.Session(impersonate="chrome")
+        home = s.get(HOMEPAGE, timeout=60)
+        _note(transport="curl_cffi_primed", step="homepage",
+              status=home.status_code,
+              cookies=",".join(sorted(s.cookies.keys())[:6]))
+        _cffi_session = s
+    r = _cffi_session.get(API, params=params, headers=CFFI_HEADERS, timeout=90)
+    return _check(r, "curl_cffi_primed")
+
+
 def get_json(params):
+    """Try each transport (preferred-first) twice around, 3s between failures."""
+    global _preferred
+    transports = [("requests", _requests_get)]
+    if _ensure_curl_cffi():
+        transports += [("curl_cffi", _cffi_get),
+                       ("curl_cffi_primed", _cffi_primed_get)]
+    if _preferred:
+        transports.sort(key=lambda t: t[0] != _preferred)
     last = None
-    for attempt in range(3):
-        noted = False
-        try:
-            r = requests.get(API, params=params, headers=HEADERS, timeout=90)
-            if r.status_code != 200:
-                noted = True
-                _note(attempt=attempt, status=r.status_code,
-                      server=r.headers.get("Server", ""),
-                      body=r.text[:200].replace("\n", " "))
-            r.raise_for_status()
+    for _round in range(2):
+        for name, fn in transports:
             try:
-                return r.json()
-            except ValueError:
-                noted = True
-                _note(attempt=attempt, status=r.status_code, error="non-JSON body",
-                      ctype=r.headers.get("Content-Type", ""),
-                      body=r.text[:200].replace("\n", " "))
-                raise
-        except Exception as e:
-            last = e
-            if not noted:
-                _note(attempt=attempt, error=f"{type(e).__name__}: {str(e)[:200]}")
-            time.sleep(5 * (attempt + 1))
+                js = fn(params)
+                if _preferred != name:
+                    _note(transport=name, ok=True)
+                    _preferred = name
+                return js
+            except Exception as e:
+                last = e
+                time.sleep(3)
     raise last
 
+
+# ------------------------- fetch + normalize --------------------------------
 
 def fetch(fm: str, to: str) -> list:
     """fm/to: YYYY-MM-DD. Tries the date formats the API might accept."""
@@ -200,7 +294,8 @@ if __name__ == "__main__":
         "rows": int(len(df)),
         "failed_chunks": failed_chunks,
         "ok": bool(len(rows) > 0),
-        "attempts": DIAG[:6],
+        "transport_used": _preferred,
+        "attempts": DIAG[:12],
     }
     with open(DIAG_FILE, "w") as fh:
         json.dump(diag, fh, default=str)
