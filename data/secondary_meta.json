@@ -1,13 +1,13 @@
 {
- "last_refresh": "2026-11-07T12:41:47+05:30",
+ "last_refresh": "2026-11-08T12:52:46+05:30",
  "last_trade_date": "2026-11-06",
  "last_fetch": {
   "window": [
-   "2026-11-05",
-   "2026-11-07"
+   "2026-11-06",
+   "2026-11-08"
   ],
-  "raw_rows": 2342,
-  "rows": 687,
+  "raw_rows": 1050,
+  "rows": 271,
   "failed_chunks": 0,
   "ok": true,
   "transport_used": "curl_cffi",
@@ -17,12 +17,12 @@
     "status": 403,
     "server": "",
     "body": "<HTML><HEAD> <TITLE>Access Denied</TITLE> </HEAD><BODY> <H1>Access Denied</H1>   You don't have permission to access \"http&#58;&#47;&#47;api&#46;bseindia&#46;com&#47;BseIndiaAPI&#47;api&#47;Mkt&#95;De",
-    "at": "2026-11-07T07:11:41Z"
+    "at": "2026-11-08T07:22:28Z"
    },
    {
     "transport": "curl_cffi",
     "ok": true,
-    "at": "2026-11-07T07:11:47Z"
+    "at": "2026-11-08T07:22:36Z"
    }
   ]
  }
