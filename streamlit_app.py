@@ -1555,8 +1555,6 @@ col2.metric("Maturing in 30 days",  f"{(df['Days to Maturity'] <= 30).sum():,}")
 col3.metric("With Yield", f"{df['Yield (%)'].notna().sum():,}")
 col4.metric("Data as of", today.strftime("%d %b %Y"))
 
-st.divider()
-
 # ------------------------------------------------------------------ #
 # Views (presets), table controls and sidebar filters
 # ------------------------------------------------------------------ #
@@ -1583,19 +1581,19 @@ PSU_OPTIONS = ["All", "Exclude PSU", "PSU only"]
 MLD_OPTIONS = ["All", "Exclude MLDs", "Only MLDs"]
 
 PRESETS = {
-    "High grade with yields": {
+    "High grade": {
         "grade": "A+ or better", "with_yield": True, "mld": "Exclude MLDs",
         "help": "A+ and above, bonds with a yield (MF mark or exchange trade), MLDs excluded",
     },
-    "AAA / AA+ maturing in 90 days": {
+    "AAA/AA+ · 90 days": {
         "grade": "AA+ or better", "days": 90, "mld": "Exclude MLDs",
         "help": "Top-rated paper redeeming in the next 90 days",
     },
-    "Refinancing pipeline (12 months)": {
+    "Refi pipeline · 12m": {
         "grade": "A+ or better", "days": 360, "mld": "Exclude MLDs",
         "help": "A+ and above redeeming within ~12 months, with or without a yield",
     },
-    "PSU spreads vs NABARD": {
+    "PSU vs NABARD": {
         "psu": "PSU only", "with_yield": True, "mld": "Exclude MLDs",
         "sort": "Spread (bps)", "asc": False,
         "help": "PSU bonds with a yield, widest spread over the NABARD benchmark first",
@@ -1604,7 +1602,7 @@ PRESETS = {
         "help": "The full NSDL universe of outstanding NCDs and bonds, no filters",
     },
 }
-DEFAULT_PRESET = "High grade with yields"
+DEFAULT_PRESET = "High grade"
 
 if "flt_epoch" not in st.session_state:
     st.session_state.flt_epoch = 0
@@ -2051,12 +2049,7 @@ if display_df.shape[0] * display_df.shape[1] <= 120_000:
     except Exception:
         _table_data = display_df
 
-st.dataframe(
-    _table_data,
-    use_container_width=True,
-    height=620,
-    hide_index=True,
-    column_config={
+_COLCFG = {
         "ISIN":           st.column_config.LinkColumn(
                               width="medium",
                               display_text=r"isin=(.*)$",
@@ -2098,7 +2091,22 @@ st.dataframe(
         "Holders Mix":    st.column_config.TextColumn("Holders Mix (Qtr)", width="medium",
                                                       help="Investor-category split of holders from NSDL's quarterly Statement of Debenture/Bond Holders (latest reported quarter-end, % of units; non-zero categories only). Fetched for yield-covered bonds."),
         "Sector":         st.column_config.TextColumn(width="medium"),
-    },
+    }
+if _table_data is not display_df:
+    # Styler active: it supplies the text for numbers and dates.
+    for _c, _lbl in [("Coupon Rate (%)", "Coupon (%)"), ("Issue Size (Cr)", "Size (Cr)"),
+                     ("Yield (%)", "Yield (%)"), ("Spread (bps)", "Spread (bps)"),
+                     ("NABARD Yield (%)", "NABARD Yld (%)"), ("Days to Maturity", "Days Left")]:
+        _COLCFG[_c] = st.column_config.NumberColumn(_lbl)
+    for _c in _DATE_COLS:
+        _COLCFG[_c] = st.column_config.DateColumn(_c)
+
+st.dataframe(
+    _table_data,
+    use_container_width=True,
+    height=620,
+    hide_index=True,
+    column_config=_COLCFG,
 )
 
 # ------------------------------------------------------------------ #
