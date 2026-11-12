@@ -101,6 +101,18 @@ section.main > div,
     font-family: var(--font) !important;
 }
 
+/* ── Use the full width for the table (default side padding is 5rem) ── */
+[data-testid="stMainBlockContainer"] {
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+    padding-top: 3rem !important;
+    max-width: 100% !important;
+}
+/* ── Viewer-facing: no Fork / GitHub / developer menu ── */
+[data-testid="stToolbarActions"],
+[data-testid="stMainMenu"],
+[data-testid="stAppDeployButton"] { display: none !important; }
+
 /* ── Top header bar ── */
 [data-testid="stHeader"] {
     background-color: var(--bg) !important;
@@ -1155,61 +1167,6 @@ def _load_prefix_map() -> dict:
 
 
 
-def _sector_checkbox_panel(available_sectors: list) -> list:
-    grouped: dict[str, list] = {"Corporate": [], "Infrastructure": [],
-                                "Financial Institutions": []}
-    for s in available_sectors:
-        grouped[_sector_group(s)].append(s)
-
-    # Epoch-aware keys so the Reset Filters button (which bumps flt_epoch)
-    # re-mounts the checkboxes with defaults — see the sidebar reset handler.
-    _fe = st.session_state.get("flt_epoch", 0)
-
-    def _ck(s):
-        return f"bchk_{_fe}_{s}"
-
-    for s in available_sectors:
-        wkey = _ck(s)
-        if wkey not in st.session_state:
-            st.session_state[wkey] = True
-
-    st.markdown("**Sectors**")
-    qc1, qc2, qc3 = st.columns(3)
-    if qc1.button("All",  key="bsec_all",  use_container_width=True):
-        for s in available_sectors:
-            st.session_state[_ck(s)] = True
-        st.rerun()
-    if qc2.button("None", key="bsec_none", use_container_width=True):
-        for s in available_sectors:
-            st.session_state[_ck(s)] = False
-        st.rerun()
-    if qc3.button("Corp", key="bsec_corp", use_container_width=True,
-                  help="Corporate sectors only"):
-        for s in available_sectors:
-            st.session_state[_ck(s)] = (_sector_group(s) == "Corporate")
-        st.rerun()
-
-    selected = []
-    for grp in ["Corporate", "Infrastructure", "Financial Institutions"]:
-        members = grouped.get(grp, [])
-        if not members:
-            continue
-        with st.expander(grp, expanded=(grp == "Corporate")):
-            ga1, ga2 = st.columns(2)
-            if ga1.button("All",  key=f"bgrp_all_{grp}",  use_container_width=True):
-                for s in members:
-                    st.session_state[_ck(s)] = True
-                st.rerun()
-            if ga2.button("None", key=f"bgrp_none_{grp}", use_container_width=True):
-                for s in members:
-                    st.session_state[_ck(s)] = False
-                st.rerun()
-            for sector in sorted(members):
-                if st.checkbox(sector or "(unclassified)", key=_ck(sector)):
-                    selected.append(sector)
-    return selected
-
-
 # ------------------------------------------------------------------ #
 # App UI
 # ------------------------------------------------------------------ #
@@ -1453,10 +1410,135 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Load data
+# Load + enrich the bond universe.
+# 2026-11-12: the whole enrichment (yield merges, NABARD spread, the ~22k-row
+# ratings join and date parsing) used to run at module level on EVERY rerun,
+# i.e. on every click of any filter. It is now built once and cached; the
+# "Refresh Data" button (cache clear) and the 10-minute TTL pick up new data.
+@st.cache_data(ttl=600, show_spinner=False)
+def _build_universe(today_iso: str) -> pd.DataFrame:
+    df = load_bonds()
+    if df.empty:
+        return df
+    # MF yield enrichment (Yield / As of / Src / Holders), merged by ISIN
+    _mf_yields = _load_mf_yields()
+    if not _mf_yields.empty:
+        df = df.merge(_mf_yields, on="ISIN", how="left")
+    else:
+        df["Yield (%)"] = None
+        df["As of"] = None
+        df["Src"] = None
+        df["Holders"] = None
+
+    # Secondary-trade override (BSE/NSE): where an exchange trade exists and is
+    # strictly more recent than the MF mark (or the bond has no MF mark at all),
+    # show the traded yield / trade date instead, with Src = exchange name.
+    _secondary = _load_secondary_yields()
+    if not _secondary.empty:
+        _sec = _secondary.rename(columns={
+            "isin":   "ISIN",
+            "yield":  "_sec_yield",
+            "as_of":  "_sec_as_of",
+            "source": "_sec_src",
+        })[["ISIN", "_sec_yield", "_sec_as_of", "_sec_src"]]
+        df = df.merge(_sec, on="ISIN", how="left")
+        _mf_as_of = pd.to_datetime(df["As of"], format="%d/%m/%Y", errors="coerce")
+        _override = df["_sec_yield"].notna() & (
+            df["Yield (%)"].isna() | (df["_sec_as_of"] > _mf_as_of)
+        )
+        df.loc[_override, "Yield (%)"] = df.loc[_override, "_sec_yield"]
+        df.loc[_override, "As of"] = df.loc[_override, "_sec_as_of"].dt.strftime("%d/%m/%Y")
+        df.loc[_override, "Src"] = df.loc[_override, "_sec_src"]
+        df = df.drop(columns=["_sec_yield", "_sec_as_of", "_sec_src"])
+
+    # Spread vs the closest-maturity, freshest NABARD benchmark (see
+    # _attach_nabard_spread for the selection rule). Needs Maturity Date + Yield.
+    df = _attach_nabard_spread(df, _load_mf_history(), _load_secondary_history(),
+                               date.today())
+
+    # ------------------------------------------------------------------ #
+    # Latest-rating cross-reference (ratings tool DB)
+    # NSDL's Credit Rating field is as filed at issuance and often stale.
+    # Where the issuer is found in the ratings DB (creditnexus ratings
+    # tracker), Rating shows the current rating and Rating Src the agency;
+    # otherwise it falls back to the NSDL at-issuance rating.
+    # ------------------------------------------------------------------ #
+    df["Rating (NSDL)"] = df["Rating"]
+    df["Rating Src"] = "NSDL"
+    df["Rated On"] = pd.NaT
+    _rt_lookup = _load_ratings_lookup()
+    if _rt_lookup:
+        _pfx_map = _load_prefix_map()
+        _db_syms, _db_agencies, _db_dates = [], [], []
+        for _isin, _issuer in zip(df["ISIN"], df["Issuer"]):
+            # 1) exact join via the ISIN issuer-prefix map (immune to name quirks)
+            _rec = None
+            _cname = _pfx_map.get(str(_isin)[:7])
+            if _cname:
+                _rec = _rt_lookup.get(_normalize_co_rt(_cname))
+            # 2) fall back to the normalized-name join
+            if _rec is None:
+                _rec = _rt_lookup.get(
+                    _normalize_co_rt(_issuer) if isinstance(_issuer, str) else "")
+            # Prefer the DB's parsed grade integer (exact, incl. +/- modifiers);
+            # fall back to parsing the rating string.
+            _sym = (GRADE_INT2SYM.get(_rec.get("grade"))
+                    or _primary_rating(_rec.get("rating"))) if _rec else None
+            _db_syms.append(_sym)
+            _db_agencies.append((_rec.get("agency") or "").strip() if _rec else "")
+            _db_dates.append((_rec.get("date") or "") if _rec else "")
+        df["_db_rating"] = _db_syms
+        _has_db = df["_db_rating"].notna()
+        df.loc[_has_db, "Rating"] = df.loc[_has_db, "_db_rating"]
+        df["_db_agency"] = _db_agencies
+        df.loc[_has_db, "Rating Src"] = df.loc[_has_db, "_db_agency"]
+        # rating_date strings mix formats ("2026-01-29", "July 04, 2025",
+        # "2026-03-30T00:00:00+05:30", …); parse per unique value and strip any
+        # timezone — pandas 3.x raises on mixed formats in one vectorised
+        # to_datetime call, and mixing tz-aware with naive Timestamps degrades
+        # the Series to object dtype, which .loc/assignment then rejects.
+        _dcache = {}
+        def _pdate(s):
+            if not s or s in ("nan", "None"):
+                return pd.NaT
+            if s not in _dcache:
+                try:
+                    _ts = pd.to_datetime(s, errors="coerce")
+                    if _ts is not pd.NaT and getattr(_ts, "tzinfo", None) is not None:
+                        _ts = _ts.tz_localize(None)
+                    _dcache[s] = _ts
+                except (ValueError, TypeError):
+                    _dcache[s] = pd.NaT
+            return _dcache[s]
+        _dates = pd.to_datetime(
+            pd.Series([_pdate(d) for d in _db_dates], index=df.index),
+            errors="coerce")
+        df["Rated On"] = _dates.where(_has_db)
+        df = df.drop(columns=["_db_rating", "_db_agency"])
+
+    # Market-linked debentures: identified from the Coupon Detail text (index /
+    # equity / commodity / G-sec linked underlyings, as filed with NSDL)
+    _MLD_RE = re.compile(r"nifty|sensex|index|leap|gold|silver|mcx|basket|"
+                         r"underlying|linked|revenue of", re.I)
+    df["MLD"] = df["Coupon Detail"].fillna("").str.contains(_MLD_RE).map(
+        {True: "Yes", False: "No"})
+
+    # Quarterly investor-category holdings mix (NSDL per-ISIN statement),
+    # available for yield-covered bonds
+    _hm = _load_holdings_mix()
+    if not _hm.empty:
+        df = df.merge(_hm.rename(columns={"isin": "ISIN", "mix": "Holders Mix",
+                                          "as_of": "Holders Mix As Of"}),
+                      on="ISIN", how="left")
+    else:
+        df["Holders Mix"] = None
+        df["Holders Mix As Of"] = None
+    return df
+
+
 with st.spinner("Loading bond data from NSDL… (first load takes ~30 seconds)"):
     try:
-        df = load_bonds()
+        df = _build_universe(date.today().isoformat())
     except Exception as e:
         st.error(f"Failed to load data from NSDL: {e}")
         st.stop()
@@ -1464,120 +1546,6 @@ with st.spinner("Loading bond data from NSDL… (first load takes ~30 seconds)")
 if df.empty:
     st.warning("No upcoming bond maturities found.")
     st.stop()
-
-# MF yield enrichment (Yield / As of / Src / Holders), merged by ISIN
-_mf_yields = _load_mf_yields()
-if not _mf_yields.empty:
-    df = df.merge(_mf_yields, on="ISIN", how="left")
-else:
-    df["Yield (%)"] = None
-    df["As of"] = None
-    df["Src"] = None
-    df["Holders"] = None
-
-# Secondary-trade override (BSE/NSE): where an exchange trade exists and is
-# strictly more recent than the MF mark (or the bond has no MF mark at all),
-# show the traded yield / trade date instead, with Src = exchange name.
-_secondary = _load_secondary_yields()
-if not _secondary.empty:
-    _sec = _secondary.rename(columns={
-        "isin":   "ISIN",
-        "yield":  "_sec_yield",
-        "as_of":  "_sec_as_of",
-        "source": "_sec_src",
-    })[["ISIN", "_sec_yield", "_sec_as_of", "_sec_src"]]
-    df = df.merge(_sec, on="ISIN", how="left")
-    _mf_as_of = pd.to_datetime(df["As of"], format="%d/%m/%Y", errors="coerce")
-    _override = df["_sec_yield"].notna() & (
-        df["Yield (%)"].isna() | (df["_sec_as_of"] > _mf_as_of)
-    )
-    df.loc[_override, "Yield (%)"] = df.loc[_override, "_sec_yield"]
-    df.loc[_override, "As of"] = df.loc[_override, "_sec_as_of"].dt.strftime("%d/%m/%Y")
-    df.loc[_override, "Src"] = df.loc[_override, "_sec_src"]
-    df = df.drop(columns=["_sec_yield", "_sec_as_of", "_sec_src"])
-
-# Spread vs the closest-maturity, freshest NABARD benchmark (see
-# _attach_nabard_spread for the selection rule). Needs Maturity Date + Yield.
-df = _attach_nabard_spread(df, _load_mf_history(), _load_secondary_history(),
-                           date.today())
-
-# ------------------------------------------------------------------ #
-# Latest-rating cross-reference (ratings tool DB)
-# NSDL's Credit Rating field is as filed at issuance and often stale.
-# Where the issuer is found in the ratings DB (creditnexus ratings
-# tracker), Rating shows the current rating and Rating Src the agency;
-# otherwise it falls back to the NSDL at-issuance rating.
-# ------------------------------------------------------------------ #
-df["Rating (NSDL)"] = df["Rating"]
-df["Rating Src"] = "NSDL"
-df["Rated On"] = pd.NaT
-_rt_lookup = _load_ratings_lookup()
-if _rt_lookup:
-    _pfx_map = _load_prefix_map()
-    _db_syms, _db_agencies, _db_dates = [], [], []
-    for _isin, _issuer in zip(df["ISIN"], df["Issuer"]):
-        # 1) exact join via the ISIN issuer-prefix map (immune to name quirks)
-        _rec = None
-        _cname = _pfx_map.get(str(_isin)[:7])
-        if _cname:
-            _rec = _rt_lookup.get(_normalize_co_rt(_cname))
-        # 2) fall back to the normalized-name join
-        if _rec is None:
-            _rec = _rt_lookup.get(
-                _normalize_co_rt(_issuer) if isinstance(_issuer, str) else "")
-        # Prefer the DB's parsed grade integer (exact, incl. +/- modifiers);
-        # fall back to parsing the rating string.
-        _sym = (GRADE_INT2SYM.get(_rec.get("grade"))
-                or _primary_rating(_rec.get("rating"))) if _rec else None
-        _db_syms.append(_sym)
-        _db_agencies.append((_rec.get("agency") or "").strip() if _rec else "")
-        _db_dates.append((_rec.get("date") or "") if _rec else "")
-    df["_db_rating"] = _db_syms
-    _has_db = df["_db_rating"].notna()
-    df.loc[_has_db, "Rating"] = df.loc[_has_db, "_db_rating"]
-    df["_db_agency"] = _db_agencies
-    df.loc[_has_db, "Rating Src"] = df.loc[_has_db, "_db_agency"]
-    # rating_date strings mix formats ("2026-01-29", "July 04, 2025",
-    # "2026-03-30T00:00:00+05:30", …); parse per unique value and strip any
-    # timezone — pandas 3.x raises on mixed formats in one vectorised
-    # to_datetime call, and mixing tz-aware with naive Timestamps degrades
-    # the Series to object dtype, which .loc/assignment then rejects.
-    _dcache = {}
-    def _pdate(s):
-        if not s or s in ("nan", "None"):
-            return pd.NaT
-        if s not in _dcache:
-            try:
-                _ts = pd.to_datetime(s, errors="coerce")
-                if _ts is not pd.NaT and getattr(_ts, "tzinfo", None) is not None:
-                    _ts = _ts.tz_localize(None)
-                _dcache[s] = _ts
-            except (ValueError, TypeError):
-                _dcache[s] = pd.NaT
-        return _dcache[s]
-    _dates = pd.to_datetime(
-        pd.Series([_pdate(d) for d in _db_dates], index=df.index),
-        errors="coerce")
-    df["Rated On"] = _dates.where(_has_db)
-    df = df.drop(columns=["_db_rating", "_db_agency"])
-
-# Market-linked debentures: identified from the Coupon Detail text (index /
-# equity / commodity / G-sec linked underlyings, as filed with NSDL)
-_MLD_RE = re.compile(r"nifty|sensex|index|leap|gold|silver|mcx|basket|"
-                     r"underlying|linked|revenue of", re.I)
-df["MLD"] = df["Coupon Detail"].fillna("").str.contains(_MLD_RE).map(
-    {True: "Yes", False: "No"})
-
-# Quarterly investor-category holdings mix (NSDL per-ISIN statement),
-# available for yield-covered bonds
-_hm = _load_holdings_mix()
-if not _hm.empty:
-    df = df.merge(_hm.rename(columns={"isin": "ISIN", "mix": "Holders Mix",
-                                      "as_of": "Holders Mix As Of"}),
-                  on="ISIN", how="left")
-else:
-    df["Holders Mix"] = None
-    df["Holders Mix As Of"] = None
 
 # Stats row
 today = date.today()
@@ -1590,18 +1558,89 @@ col4.metric("Data as of", today.strftime("%d %b %Y"))
 st.divider()
 
 # ------------------------------------------------------------------ #
-# Sidebar filters
+# Views (presets), table controls and sidebar filters
 # ------------------------------------------------------------------ #
+# A "view" is a named set of filter defaults. Picking one re-mounts every
+# filter widget with that view's defaults (same epoch mechanism as Reset
+# Filters); the user can then adjust any filter from there.
+GRADE_OPTIONS = {
+    "AAA only":       ["AAA"],
+    "AA+ or better":  ["AAA", "AA+"],
+    "AA or better":   ["AAA", "AA+", "AA"],
+    "AA- or better":  ["AAA", "AA+", "AA", "AA-"],
+    "A+ or better":   ["AAA", "AA+", "AA", "AA-", "A+"],
+    "A or better":    ["AAA", "AA+", "AA", "AA-", "A+", "A"],
+    "A- or better":   ["AAA", "AA+", "AA", "AA-", "A+", "A", "A-"],
+    "BBB+ or better": ["AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+"],
+    "All rated":      RATING_GRADES,
+    "All (inc. unrated)": None,
+}
+SORT_OPTIONS = [
+    "Maturity Date", "Issue Date", "Issue Size (Cr)", "Coupon Rate (%)",
+    "Rating", "Issuer", "Days to Maturity", "Yield (%)", "Spread (bps)",
+]
+PSU_OPTIONS = ["All", "Exclude PSU", "PSU only"]
+MLD_OPTIONS = ["All", "Exclude MLDs", "Only MLDs"]
+
+PRESETS = {
+    "High grade with yields": {
+        "grade": "A+ or better", "with_yield": True, "mld": "Exclude MLDs",
+        "help": "A+ and above, bonds with a yield (MF mark or exchange trade), MLDs excluded",
+    },
+    "AAA / AA+ maturing in 90 days": {
+        "grade": "AA+ or better", "days": 90, "mld": "Exclude MLDs",
+        "help": "Top-rated paper redeeming in the next 90 days",
+    },
+    "Refinancing pipeline (12 months)": {
+        "grade": "A+ or better", "days": 360, "mld": "Exclude MLDs",
+        "help": "A+ and above redeeming within ~12 months, with or without a yield",
+    },
+    "PSU spreads vs NABARD": {
+        "psu": "PSU only", "with_yield": True, "mld": "Exclude MLDs",
+        "sort": "Spread (bps)", "asc": False,
+        "help": "PSU bonds with a yield, widest spread over the NABARD benchmark first",
+    },
+    "All bonds": {
+        "help": "The full NSDL universe of outstanding NCDs and bonds, no filters",
+    },
+}
+DEFAULT_PRESET = "High grade with yields"
+
+if "flt_epoch" not in st.session_state:
+    st.session_state.flt_epoch = 0
+if "preset" not in st.session_state:
+    # A deep link from the ratings dashboard (?issuer=...) should show every
+    # bond of that issuer, not only the high-grade, yield-covered ones.
+    st.session_state.preset = ("All bonds" if st.query_params.get("issuer", "")
+                               else DEFAULT_PRESET)
+_fe = st.session_state.flt_epoch
+_P = PRESETS.get(st.session_state.preset, PRESETS[DEFAULT_PRESET])
+
+
+def _apply_preset(name: str, clear_query: bool = False) -> None:
+    """Switch view: drop every filter widget's state and re-mount them
+    (bumping the epoch changes their keys) with the view's defaults."""
+    if clear_query:
+        st.query_params.clear()        # also clears an ?issuer= pre-fill
+    for _k in list(st.session_state.keys()):
+        if _k.startswith(("flt_", "bchk_")) and _k != "flt_epoch":
+            del st.session_state[_k]
+    st.session_state.preset = name
+    st.session_state.flt_epoch = st.session_state.get("flt_epoch", 0) + 1
+    st.rerun()
+
+
 # ------------------------------------------------------------------ #
 # Column picker — which table columns are shown. Remembered per browser
 # in localStorage through a tiny bidirectional component (col_store/):
 # the "get" instance (below) reports the stored value to Python on first
-# render, the "set" instance (after the sidebar) writes the current choice.
-# The choice is also mirrored into the URL (?cols=A|B|C) so a view can be
-# bookmarked/shared. Deliberately NOT epoch-keyed: Reset Filters leaves
-# the column view alone. (Earlier attempts: reload-with-?cols= from a
-# components.html iframe is blocked by the iframe sandbox; a cookie is not
-# forwarded to the server by Streamlit Cloud's proxy.)
+# render, the "set" instance (after the controls) writes the current choice.
+# The choice is also mirrored into the URL (?cols=A|B|C, or ?cols=* for
+# every column) so a view can be bookmarked/shared. Deliberately NOT
+# epoch-keyed: switching views / Reset Filters leaves the columns alone.
+# A first-time visitor gets the Core set. (Earlier attempts: reload-with-
+# ?cols= from a components.html iframe is blocked by the iframe sandbox; a
+# cookie is not forwarded to the server by Streamlit Cloud's proxy.)
 # ------------------------------------------------------------------ #
 ALL_DISPLAY_COLS = [
     "ISIN", "Issuer", "Coupon Rate (%)", "Coupon Detail", "Issue Date",
@@ -1620,12 +1659,14 @@ _col_store = components.declare_component(
 
 
 def _cols_from_param(raw: str) -> list:
+    if raw == "*":
+        return list(ALL_DISPLAY_COLS)
     return [c for c in raw.split("|") if c in ALL_DISPLAY_COLS] if raw else []
 
 
 if "col_picker" not in st.session_state:
     st.session_state.col_picker = (_cols_from_param(st.query_params.get("cols", ""))
-                                   or list(ALL_DISPLAY_COLS))
+                                   or list(CORE_DISPLAY_COLS))
     st.session_state.cols_restored = "cols" in st.query_params
 if not st.session_state.get("cols_restored"):
     # Ask the browser what it remembers; None until the component reports.
@@ -1636,213 +1677,48 @@ if not st.session_state.get("cols_restored"):
         if _stored_cols:
             st.session_state.col_picker = _stored_cols
 
-with st.sidebar:
-    st.header("Filters")
+# ---- Views row ----
+st.markdown(
+    '<div style="font-size:0.72rem;font-weight:600;letter-spacing:0.08em;'
+    'text-transform:uppercase;color:#6B7280;margin:2px 0 6px 2px">Views</div>',
+    unsafe_allow_html=True,
+)
+_pcols = st.columns(len(PRESETS))
+for _pc, _pname in zip(_pcols, PRESETS):
+    if _pc.button(
+        _pname, key=f"preset_btn_{_pname}", use_container_width=True,
+        type="primary" if _pname == st.session_state.preset else "secondary",
+        help=PRESETS[_pname]["help"],
+    ):
+        _apply_preset(_pname, clear_query=True)
 
-    if st.button("↺  Refresh Data", type="secondary", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
-
-    # ---- Secondary trades refresh (BSE/NSE) ----
-    _sec_meta = _load_secondary_meta()
-    _last_ref = str(_sec_meta.get("last_refresh") or "")
-    if _last_ref:
-        try:
-            _last_ref = (datetime.fromisoformat(_last_ref)
-                         .strftime("%d %b %Y, %H:%M IST"))
-        except ValueError:
-            pass
-    st.caption(f"Secondary trades last refreshed: {_last_ref or 'never'}")
-
-    if st.button("⟳  Refresh Secondary Trades (BSE/NSE)", type="secondary",
-                 use_container_width=True):
-        try:
-            from gh_app_auth import get_installation_token
-            _gh_token = get_installation_token()
-            _gh_err = ""
-        except Exception as e:
-            _gh_token = ""
-            _gh_err = str(e)
-        if not _gh_token:
-            st.error("Couldn't get a GitHub App token to start the refresh. "
-                     "Check that GH_APP_PRIVATE_KEY is set in Streamlit secrets. "
-                     f"({_gh_err})")
-        else:
-            try:
-                _resp = requests.post(
-                    GH_DISPATCH_URL,
-                    json={"ref": "main"},
-                    headers={
-                        "Authorization": f"Bearer {_gh_token}",
-                        "Accept": "application/vnd.github+json",
-                        "X-GitHub-Api-Version": "2022-11-28",
-                        "User-Agent": "creditnexus-bonds-app",
-                    },
-                    timeout=20,
-                )
-                if _resp.status_code == 204:
-                    st.success("Refresh started — new trades will appear in "
-                               "~2 minutes. Click '↺ Refresh Data' after that.")
-                else:
-                    st.error(f"Workflow dispatch failed "
-                             f"({_resp.status_code}): {_resp.text[:200]}")
-            except Exception as e:
-                st.error(f"Workflow dispatch failed: {e}")
-
-    # Filter-widget epoch: bumping it changes every filter widget's key, which
-    # forces the frontend to re-mount them with defaults. Clearing session
-    # state alone resets the VALUES but leaves stale chips/text visible in
-    # widgets whose identity didn't change (Streamlit frontend quirk).
-    if "flt_epoch" not in st.session_state:
-        st.session_state.flt_epoch = 0
-    _fe = st.session_state.flt_epoch
-
-    if st.button("✕  Reset Filters", type="secondary", use_container_width=True,
-                 help="Clear the search box and return every filter to its "
-                      "default (does not re-fetch any data)"):
-        st.query_params.clear()   # also clears ?issuer= deep-link pre-fill
-        for _k in list(st.session_state.keys()):
-            if _k.startswith(("flt_", "bchk_")):
-                del st.session_state[_k]
-        st.session_state.flt_epoch = _fe + 1
-        st.rerun()
-
-    st.divider()
-    # ---- Search ----
-    # Pre-fill from deep-link: ?issuer=HDFC
-    _qp_issuer = st.query_params.get("issuer", "")
-    search_query = st.text_input(
-        "Search by ISIN or Issuer", placeholder="e.g. INE002A07HF3, Tata, HDFC",
-        value=_qp_issuer, key=f"flt_search_{_fe}",
-    ).strip()
-
-    maturity_years = sorted(df["Maturity Date"].dt.year.dropna().unique().astype(int).tolist())
-    selected_years = st.multiselect("Maturity Year (blank = all)", maturity_years,
-                                    key=f"flt_years_{_fe}")
-
-    st.divider()
-
-    # ---- Rating ----
-    grade_options = {
-        "AAA only":       ["AAA"],
-        "AA+ or better":  ["AAA", "AA+"],
-        "AA or better":   ["AAA", "AA+", "AA"],
-        "AA- or better":  ["AAA", "AA+", "AA", "AA-"],
-        "A+ or better":   ["AAA", "AA+", "AA", "AA-", "A+"],
-        "A or better":    ["AAA", "AA+", "AA", "AA-", "A+", "A"],
-        "A- or better":   ["AAA", "AA+", "AA", "AA-", "A+", "A", "A-"],
-        "BBB+ or better": ["AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+"],
-        "All rated":      RATING_GRADES,
-        "All (inc. unrated)": None,
-    }
-    grade_choice = st.selectbox(
-        "Minimum Rating",
-        options=list(grade_options.keys()),
-        index=list(grade_options.keys()).index("All (inc. unrated)"),
-        key=f"flt_grade_{_fe}",
-    )
-    selected_grade_set = grade_options[grade_choice]
-
-    exact_ratings = st.multiselect(
-        "Exact Ratings (tick to include only these)",
-        options=RATING_GRADES,
-        default=[],
-        placeholder="e.g. AA-",
-        key=f"flt_exact_{_fe}",
-        help="Show only bonds whose current rating is one of the ticked "
-             "grades (e.g. tick just AA-). Overrides Minimum Rating. "
-             "Ratings are cross-referenced against the ratings tracker DB "
-             "where the issuer is covered; otherwise the NSDL rating is used.",
-    )
-
-    st.divider()
-
-    # ---- MF holdings ----
-    only_mf_held = st.checkbox(
-        "Only MF-held bonds",
-        key=f"flt_mf_{_fe}",
-        help="Show only bonds appearing in the latest fortnightly debt-scheme "
-             "disclosures of HDFC / SBI / ICICI Pru / Aditya Birla / Axis / "
-             "Nippon / Kotak / UTI / Tata MF",
-    )
-
-    st.divider()
-
-    # ---- Issue size ----
-    st.markdown("**Issue Size (₹ Crores)**")
-    sc1, sc2 = st.columns(2)
-    min_size = sc1.number_input("Min", min_value=0.0, value=0.0, step=50.0, format="%.0f", label_visibility="collapsed", key=f"flt_szmin_{_fe}")
-    max_size = sc2.number_input("Max (0=no limit)", min_value=0.0, value=0.0, step=500.0, format="%.0f", label_visibility="collapsed", key=f"flt_szmax_{_fe}")
-    sc1.caption("Min Cr")
-    sc2.caption("Max Cr (0=no limit)")
-
-    st.divider()
-
-    # ---- Listing status ----
-    listed_choice = st.radio(
-        "Listing Status",
-        options=["All", "Listed only", "Unlisted only"],
-        index=0,
-        horizontal=True,
-        key=f"flt_listed_{_fe}",
-    )
-
-    # ---- PSU / sovereign ----
-    exclude_psu = st.checkbox(
-        "Exclude PSU / Sovereign",
-        key=f"flt_psu_{_fe}",
-        help="Hide government-owned / public sector issuers. Uses NSDL's "
-             "Type of Issuer-Ownership field, backed up by name-based "
-             "detection where NSDL leaves it blank or misfiles it.",
-    )
-
-    # ---- Market-linked debentures ----
-    mld_choice = st.radio(
-        "Market-Linked Debentures",
-        options=["All", "Exclude MLDs", "Only MLDs"],
-        index=0,
-        horizontal=True,
-        key=f"flt_mld_{_fe}",
-        help="MLDs are detected from the coupon text filed with NSDL "
-             "(Nifty/Sensex/index/gold/G-sec-linked underlyings — see the "
-             "Coupon Detail column).",
-    )
-
-    st.divider()
-
-    # ---- Instrument type ----
-    with st.expander("Instrument Type", expanded=False):
-        all_types = sorted(df["Type"].dropna().unique().tolist())
-        selected_types = st.multiselect("Types (blank = all)", all_types, label_visibility="collapsed", key=f"flt_types_{_fe}")
-
-    # ---- Maturity window ----
-    with st.expander("Maturity Window", expanded=False):
-        max_days = st.slider(
-            "Maturing within N days (0 = no limit)",
-            min_value=0, max_value=3650, value=0, step=30,
-            key=f"flt_days_{_fe}",
-        )
-
-    st.divider()
-
-    # ---- Sectors ----
-    available_sectors = sorted(df["Sector"].dropna().unique().tolist())
-    available_sectors = [s for s in available_sectors if s]
-    selected_sectors = _sector_checkbox_panel(available_sectors)
-
-    st.divider()
-
-    # ---- Sort ----
-    st.markdown("**Sort**")
-    sort_col = st.selectbox("Sort by", [
-        "Maturity Date", "Issue Date", "Issue Size (Cr)", "Coupon Rate (%)",
-        "Rating", "Issuer", "Days to Maturity", "Yield (%)", "Spread (bps)"
-    ], label_visibility="collapsed", key=f"flt_sort_{_fe}")
-    sort_asc = st.radio("Order", ["Ascending", "Descending"], horizontal=True,
-                        key=f"flt_order_{_fe}") == "Ascending"
-
-    # ---- Columns ----
-    with st.expander("Columns", expanded=False):
+# ---- Table controls (search, rating, sort, columns) ----
+_k1, _k2, _k3, _k4, _k5 = st.columns([3, 1.6, 1.6, 1.3, 1.2])
+_qp_issuer = st.query_params.get("issuer", "")     # deep-link pre-fill
+search_query = _k1.text_input(
+    "Search by ISIN or issuer", placeholder="e.g. INE002A07HF3, Tata, HDFC",
+    value=_qp_issuer, key=f"flt_search_{_fe}",
+).strip()
+grade_choice = _k2.selectbox(
+    "Minimum rating", options=list(GRADE_OPTIONS.keys()),
+    index=list(GRADE_OPTIONS.keys()).index(_P.get("grade", "All (inc. unrated)")),
+    key=f"flt_grade_{_fe}",
+)
+selected_grade_set = GRADE_OPTIONS[grade_choice]
+sort_col = _k3.selectbox(
+    "Sort by", SORT_OPTIONS,
+    index=SORT_OPTIONS.index(_P.get("sort", "Maturity Date")),
+    key=f"flt_sort_{_fe}",
+)
+sort_asc = _k4.selectbox(
+    "Order", ["Ascending", "Descending"],
+    index=0 if _P.get("asc", True) else 1,
+    key=f"flt_order_{_fe}",
+) == "Ascending"
+with _k5:
+    # spacer so the button lines up with the labelled inputs beside it
+    st.markdown('<div style="height:1.75rem"></div>', unsafe_allow_html=True)
+    with st.popover("Columns", use_container_width=True):
         st.caption("Choose which columns the table shows. Remembered in this "
                    "browser for next time. The CSV export always has every column.")
         _cb1, _cb2 = st.columns(2)
@@ -1858,29 +1734,204 @@ with st.sidebar:
 
 # Resolve + persist the column choice (blank selection = show everything)
 visible_cols = [c for c in ALL_DISPLAY_COLS if c in (visible_cols or ALL_DISPLAY_COLS)]
-_cols_param = "|".join(visible_cols) if len(visible_cols) < len(ALL_DISPLAY_COLS) else ""
+if len(visible_cols) == len(ALL_DISPLAY_COLS):
+    _cols_value = "*"
+else:
+    _cols_value = "|".join(visible_cols)
+# Keep the URL clean for the default (Core) view
+_cols_param = "" if visible_cols == CORE_DISPLAY_COLS else _cols_value
 if _cols_param:
     if st.query_params.get("cols", "") != _cols_param:
         st.query_params["cols"] = _cols_param
 elif "cols" in st.query_params:
     del st.query_params["cols"]
 # Persist to localStorage once the stored value has been consulted (never
-# before, or a default "all" would overwrite the remembered view).
+# before, or the default would overwrite the remembered view).
 if st.session_state.get("cols_restored"):
-    _col_store(mode="set", name=_COLS_LS_KEY, value=_cols_param, default=True,
+    _col_store(mode="set", name=_COLS_LS_KEY, value=_cols_value, default=True,
                key="col_store_set")
+
+
+def _sector_multiselects(available_sectors: list) -> list:
+    """One searchable multiselect per sector group; blank = no sector filter."""
+    grouped: dict[str, list] = {"Corporate": [], "Infrastructure": [],
+                                "Financial Institutions": []}
+    for _s in available_sectors:
+        grouped[_sector_group(_s)].append(_s)
+    chosen: list = []
+    for _grp, _members in grouped.items():
+        if not _members:
+            continue
+        chosen += st.multiselect(
+            _grp, sorted(_members), key=f"flt_sec_{_grp}_{_fe}",
+            placeholder="All",
+        )
+    return chosen
+
+
+with st.sidebar:
+    st.header("Filters")
+
+    if st.button("✕  Reset Filters", type="secondary", use_container_width=True,
+                 help="Clear the search box and return to the default view "
+                      f"({DEFAULT_PRESET}). Does not re-fetch any data."):
+        _apply_preset(DEFAULT_PRESET, clear_query=True)
+
+    # ---- Maturity ----
+    maturity_years = sorted(df["Maturity Date"].dt.year.dropna().unique().astype(int).tolist())
+    selected_years = st.multiselect("Maturity year", maturity_years,
+                                    placeholder="All", key=f"flt_years_{_fe}")
+    max_days = st.slider(
+        "Maturing within N days (0 = no limit)",
+        min_value=0, max_value=3650, value=int(_P.get("days", 0)), step=30,
+        key=f"flt_days_{_fe}",
+    )
+
+    # ---- Rating ----
+    exact_ratings = st.multiselect(
+        "Exact ratings",
+        options=RATING_GRADES,
+        default=[],
+        placeholder="Any (uses Minimum rating)",
+        key=f"flt_exact_{_fe}",
+        help="Show only bonds whose current rating is one of the ticked "
+             "grades (e.g. tick just AA-). Overrides Minimum rating. "
+             "Ratings are cross-referenced against the ratings tracker DB "
+             "where the issuer is covered; otherwise the NSDL rating is used.",
+    )
+
+    # ---- Yield / MF holdings ----
+    only_with_yield = st.checkbox(
+        "Only bonds with a yield",
+        value=bool(_P.get("with_yield", False)),
+        key=f"flt_yld_{_fe}",
+        help="Show only bonds that have a yield: an MF valuation mark from "
+             "the latest fortnightly disclosures or a recent BSE/NSE trade.",
+    )
+    only_mf_held = st.checkbox(
+        "Only MF-held bonds",
+        key=f"flt_mf_{_fe}",
+        help="Show only bonds appearing in the latest fortnightly debt-scheme "
+             "disclosures of HDFC / SBI / ICICI Pru / Aditya Birla / Axis / "
+             "Nippon / Kotak / UTI / Tata MF",
+    )
+
+    # ---- Issue size ----
+    sc1, sc2 = st.columns(2)
+    min_size = sc1.number_input("Min size (₹ cr)", min_value=0.0, value=0.0, step=50.0,
+                                format="%.0f", key=f"flt_szmin_{_fe}")
+    max_size = sc2.number_input("Max size (₹ cr)", min_value=0.0, value=0.0, step=500.0,
+                                format="%.0f", key=f"flt_szmax_{_fe}",
+                                help="0 = no limit")
+
+    st.divider()
+
+    # ---- Issuer / instrument ----
+    psu_choice = st.radio(
+        "PSU / sovereign",
+        options=PSU_OPTIONS,
+        index=PSU_OPTIONS.index(_P.get("psu", "All")),
+        horizontal=True,
+        key=f"flt_psu_{_fe}",
+        help="Government-owned / public sector issuers. Uses NSDL's "
+             "Type of Issuer-Ownership field, backed up by name-based "
+             "detection where NSDL leaves it blank or misfiles it.",
+    )
+    mld_choice = st.radio(
+        "Market-linked debentures",
+        options=MLD_OPTIONS,
+        index=MLD_OPTIONS.index(_P.get("mld", "All")),
+        horizontal=True,
+        key=f"flt_mld_{_fe}",
+        help="MLDs are detected from the coupon text filed with NSDL "
+             "(Nifty/Sensex/index/gold/G-sec-linked underlyings — see the "
+             "Coupon Detail column).",
+    )
+    listed_choice = st.radio(
+        "Listing status",
+        options=["All", "Listed only", "Unlisted only"],
+        index=0,
+        horizontal=True,
+        key=f"flt_listed_{_fe}",
+    )
+    all_types = sorted(df["Type"].dropna().unique().tolist())
+    selected_types = st.multiselect("Instrument type", all_types,
+                                    placeholder="All", key=f"flt_types_{_fe}")
+
+    st.divider()
+
+    # ---- Sectors ----
+    st.markdown("**Sectors**")
+    available_sectors = sorted(df["Sector"].dropna().unique().tolist())
+    available_sectors = [s for s in available_sectors if s]
+    selected_sectors = _sector_multiselects(available_sectors)
+
+    st.divider()
+
+    # ---- Data refresh (maintenance; kept out of the way of the filters) ----
+    with st.expander("Data refresh", expanded=False):
+        if st.button("↺  Refresh Data", type="secondary", use_container_width=True,
+                     help="Clear cached data and reload NSDL, yields and ratings"):
+            st.cache_data.clear()
+            st.rerun()
+
+        # ---- Secondary trades refresh (BSE/NSE) ----
+        _sec_meta = _load_secondary_meta()
+        _last_ref = str(_sec_meta.get("last_refresh") or "")
+        if _last_ref:
+            try:
+                _last_ref = (datetime.fromisoformat(_last_ref)
+                             .strftime("%d %b %Y, %H:%M IST"))
+            except ValueError:
+                pass
+        st.caption(f"Secondary trades last refreshed: {_last_ref or 'never'}")
+
+        if st.button("⟳  Refresh Secondary Trades (BSE/NSE)", type="secondary",
+                     use_container_width=True):
+            try:
+                from gh_app_auth import get_installation_token
+                _gh_token = get_installation_token()
+                _gh_err = ""
+            except Exception as e:
+                _gh_token = ""
+                _gh_err = str(e)
+            if not _gh_token:
+                st.error("Couldn't get a GitHub App token to start the refresh. "
+                         "Check that GH_APP_PRIVATE_KEY is set in Streamlit secrets. "
+                         f"({_gh_err})")
+            else:
+                try:
+                    _resp = requests.post(
+                        GH_DISPATCH_URL,
+                        json={"ref": "main"},
+                        headers={
+                            "Authorization": f"Bearer {_gh_token}",
+                            "Accept": "application/vnd.github+json",
+                            "X-GitHub-Api-Version": "2022-11-28",
+                            "User-Agent": "creditnexus-bonds-app",
+                        },
+                        timeout=20,
+                    )
+                    if _resp.status_code == 204:
+                        st.success("Refresh started — new trades will appear in "
+                                   "~2 minutes. Click '↺ Refresh Data' after that.")
+                    else:
+                        st.error(f"Workflow dispatch failed "
+                                 f"({_resp.status_code}): {_resp.text[:200]}")
+                except Exception as e:
+                    st.error(f"Workflow dispatch failed: {e}")
 
 
 # ------------------------------------------------------------------ #
 # Apply filters
 # ------------------------------------------------------------------ #
-filtered = df.copy()
+filtered = df
 
-# ISIN / Issuer search
+# ISIN / Issuer search (literal match — a "(" or "+" in a name is not a regex)
 if search_query:
     filtered = filtered[
-        filtered["ISIN"].str.contains(search_query, case=False, na=False) |
-        filtered["Issuer"].str.contains(search_query, case=False, na=False)
+        filtered["ISIN"].str.contains(search_query, case=False, na=False, regex=False) |
+        filtered["Issuer"].str.contains(search_query, case=False, na=False, regex=False)
     ]
 
 # Maturity year
@@ -1893,6 +1944,10 @@ if exact_ratings:
 elif selected_grade_set is not None:
     grade_set = set(selected_grade_set)
     filtered = filtered[filtered["Rating"].isin(grade_set)]
+
+# Yield-covered only
+if only_with_yield:
+    filtered = filtered[pd.to_numeric(filtered["Yield (%)"], errors="coerce").notna()]
 
 # MF-held only
 if only_mf_held and "Holders" in filtered.columns:
@@ -1910,9 +1965,11 @@ if listed_choice == "Listed only":
 elif listed_choice == "Unlisted only":
     filtered = filtered[filtered["Listing Status"] == "Unlisted"]
 
-# PSU exclude — effective flag from NSDL ownership field + name heuristic
-if exclude_psu:
+# PSU — effective flag from NSDL ownership field + name heuristic
+if psu_choice == "Exclude PSU":
     filtered = filtered[filtered["PSU"] != "PSU"]
+elif psu_choice == "PSU only":
+    filtered = filtered[filtered["PSU"] == "PSU"]
 
 # Market-linked debentures
 if mld_choice == "Exclude MLDs":
@@ -1928,8 +1985,8 @@ if selected_types:
 if max_days > 0:
     filtered = filtered[filtered["Days to Maturity"] <= max_days]
 
-# Sectors — only apply if not all selected
-if selected_sectors and len(selected_sectors) < len(available_sectors):
+# Sectors — blank = all
+if selected_sectors:
     filtered = filtered[filtered["Sector"].isin(selected_sectors)]
 
 # Sort
@@ -1938,9 +1995,15 @@ filtered = filtered.sort_values(sort_col, ascending=sort_asc, na_position="last"
 # ------------------------------------------------------------------ #
 # Display table
 # ------------------------------------------------------------------ #
-st.subheader(f"Upcoming Maturities — {len(filtered):,} bonds")
+_n_yield = int(pd.to_numeric(filtered["Yield (%)"], errors="coerce").notna().sum())
+st.markdown(
+    f'<div style="font-size:0.9rem;color:#374151;margin:4px 0 6px 2px">'
+    f'<b>{len(filtered):,} bonds</b> &nbsp;·&nbsp; {_n_yield:,} with a yield '
+    f'&nbsp;·&nbsp; {filtered["Issuer"].nunique():,} issuers</div>',
+    unsafe_allow_html=True,
+)
 
-DISPLAY_COLS = visible_cols          # user's column choice (sidebar → Columns)
+DISPLAY_COLS = visible_cols          # user's column choice (Columns button)
 display_df = filtered[DISPLAY_COLS].copy()
 # ISIN becomes a link into the yield-history view (?isin=...)
 if "ISIN" in display_df.columns:
@@ -1954,50 +2017,81 @@ if "ISIN" in display_df.columns:
 if "As of" in display_df.columns:
     display_df["As of"] = pd.to_datetime(display_df["As of"],
                                          format="%d/%m/%Y", errors="coerce")
+for _c in ("NABARD Mat", "NABARD As of"):
+    if _c in display_df.columns:
+        display_df[_c] = pd.to_datetime(display_df[_c], errors="coerce")
+for _c in ("Coupon Rate (%)", "Issue Size (Cr)", "Yield (%)", "Spread (bps)",
+           "NABARD Yield (%)"):
+    if _c in display_df.columns:
+        display_df[_c] = pd.to_numeric(display_df[_c], errors="coerce")
 if "Holders" in display_df.columns:
     display_df["Holders"] = display_df["Holders"].str.replace("; ", ", ", regex=False)
+# Text cells: blank rather than the grid's grey "None"
+for _c in ("Coupon Detail", "Rating", "Rating Src", "Src", "NABARD Ref",
+           "Holders", "Holders Mix", "Sector", "Issuer"):
+    if _c in display_df.columns:
+        display_df[_c] = display_df[_c].fillna("").astype(str)
+
+# Missing numbers / dates also render as a grey "None" in the grid. A pandas
+# Styler with na_rep="" blanks them while the underlying values stay numeric
+# (header-click sorting is unaffected). The Styler is skipped for very large
+# views, where its per-cell cost is not worth it.
+_NUM_FMT = {"Coupon Rate (%)": "{:.2f}", "Issue Size (Cr)": "{:,.0f}",
+            "Yield (%)": "{:.2f}", "Spread (bps)": "{:.0f}",
+            "NABARD Yield (%)": "{:.2f}", "Days to Maturity": "{:.0f}"}
+_DATE_COLS = ("Issue Date", "Maturity Date", "Rated On", "As of",
+              "NABARD Mat", "NABARD As of")
+_table_data = display_df
+if display_df.shape[0] * display_df.shape[1] <= 120_000:
+    try:
+        _fmt = {c: f for c, f in _NUM_FMT.items() if c in display_df.columns}
+        _fmt.update({c: (lambda d: d.strftime("%d/%m/%Y"))
+                     for c in _DATE_COLS if c in display_df.columns})
+        _table_data = display_df.style.format(_fmt, na_rep="")
+    except Exception:
+        _table_data = display_df
 
 st.dataframe(
-    display_df,
+    _table_data,
     use_container_width=True,
-    height=580,
+    height=620,
     hide_index=True,
     column_config={
         "ISIN":           st.column_config.LinkColumn(
-                              width="small",
+                              width="medium",
                               display_text=r"isin=(.*)$",
                               help="Click to see this bond's MF yield trendline over time"),
         "Issuer":         st.column_config.TextColumn(width="large"),
-        "Coupon Rate (%)": st.column_config.NumberColumn("Coupon (%)", format="%.2f", width="small",
+        "Coupon Rate (%)": st.column_config.NumberColumn("Coupon (%)", format="%.2f",
                                                          help="Fixed coupon rate. Blank for floating-rate / market-linked bonds — see Coupon Detail. 0.00 = zero-coupon."),
-        "Coupon Detail":  st.column_config.TextColumn("Coupon Detail", width="small",
+        "Coupon Detail":  st.column_config.TextColumn("Coupon Detail", width="medium",
                                                       help="Zero Coupon, floating-rate formula, or market-linked underlying (from NSDL's coupon field)"),
-        "Issue Date":     st.column_config.DateColumn("Issue Date", format="DD/MM/YYYY", width="small"),
-        "Maturity Date":  st.column_config.DateColumn("Maturity Date", format="DD/MM/YYYY", width="small"),
-        "Days to Maturity": st.column_config.NumberColumn("Days Left", format="%d", width="small"),
-        "Issue Size (Cr)": st.column_config.NumberColumn("Size (Cr)", format="%.2f", width="small",
+        "Issue Date":     st.column_config.DateColumn("Issue Date", format="DD/MM/YYYY"),
+        "Maturity Date":  st.column_config.DateColumn("Maturity Date", format="DD/MM/YYYY"),
+        "Days to Maturity": st.column_config.NumberColumn("Days Left", format="%d"),
+        "Issue Size (Cr)": st.column_config.NumberColumn("Size (Cr)", format="%.0f",
                                                          help="Issue size in INR crore (from NSDL, filed in rupees). Blank where NSDL's figure is unreliable."),
         "Rating":         st.column_config.TextColumn(width="small",
                                                       help="Current rating — from the ratings tracker DB where the issuer is covered, else NSDL at-issuance"),
-        "Rating Src":     st.column_config.TextColumn("Rating Src", width="small",
+        "Rating Src":     st.column_config.TextColumn("Rating Src",
                                                       help="Agency of the latest rating from the ratings tracker DB; NSDL = at-issuance rating from NSDL"),
-        "Rated On":       st.column_config.DateColumn("Rated On", format="DD/MM/YYYY", width="small",
+        "Rated On":       st.column_config.DateColumn("Rated On", format="DD/MM/YYYY",
                                                       help="Date of the rating shown — blank where the rating is NSDL's at-issuance value (date unknown, possibly years old)"),
-        "Yield (%)":      st.column_config.NumberColumn("Yield (%)", format="%.2f", width="small",
+        "Yield (%)":      st.column_config.NumberColumn("Yield (%)", format="%.2f",
                                                         help="YTM as marked in the latest MF fortnightly debt-scheme disclosure"),
-        "As of":          st.column_config.DateColumn("As of", format="DD/MM/YYYY", width="small",
+        "As of":          st.column_config.DateColumn("As of", format="DD/MM/YYYY",
                                                       help="Date of the MF disclosure or BSE/NSE trade the yield is taken from"),
         "Src":            st.column_config.TextColumn("Src", width="small",
                                                       help="Where the yield comes from: AMC name = MF valuation mark; BSE/NSE = actual exchange trade"),
-        "Spread (bps)":   st.column_config.NumberColumn("Spread (bps)", format="%.0f", width="small",
+        "Spread (bps)":   st.column_config.NumberColumn("Spread (bps)", format="%.0f",
                                                         help="Bond yield minus the yield of the NABARD bond chosen as benchmark, in basis points. Benchmark = NABARD bond maturing within ±10 days with the best trade-off of maturity match vs yield freshness (cost = maturity gap in days + 2 × age of the NABARD yield in days, lowest wins). Blank when no NABARD bond matures within ±10 days."),
-        "NABARD Ref":     st.column_config.TextColumn("NABARD Ref", width="small",
+        "NABARD Ref":     st.column_config.TextColumn("NABARD Ref",
                                                       help="ISIN of the NABARD bond used as the spread benchmark"),
-        "NABARD Mat":     st.column_config.DateColumn("NABARD Mat", format="DD/MM/YYYY", width="small",
+        "NABARD Mat":     st.column_config.DateColumn("NABARD Mat", format="DD/MM/YYYY",
                                                       help="Maturity date of the benchmark NABARD bond"),
-        "NABARD Yield (%)": st.column_config.NumberColumn("NABARD Yld (%)", format="%.2f", width="small",
+        "NABARD Yield (%)": st.column_config.NumberColumn("NABARD Yld (%)", format="%.2f",
                                                           help="Benchmark NABARD yield — MF valuation mark or BSE/NSE trade of ≥ ₹50 cr"),
-        "NABARD As of":   st.column_config.DateColumn("NABARD As of", format="DD/MM/YYYY", width="small",
+        "NABARD As of":   st.column_config.DateColumn("NABARD As of", format="DD/MM/YYYY",
                                                       help="Date of the benchmark NABARD yield observation"),
         "Holders":        st.column_config.TextColumn("Holders", width="medium",
                                                       help="Mutual funds holding this bond, with each AMC's total market value in INR crore, e.g. HDFC (50), SBI (100)"),
@@ -2039,22 +2133,31 @@ st.download_button(
 )
 
 st.caption(
-    "⚠️ Universe: non-convertible debentures and bonds only — convertibles "
-    "(CCD/OCD/PCD) and preference-share-style instruments are excluded. "
-    "Rating shows the latest rating from the ratings tracker DB (Rating Src "
-    "= agency) where the issuer is covered; otherwise the NSDL at-issuance "
-    "rating (Rating Src = NSDL), which can be dated. "
-    "Yield / As of / Holders come from the fortnightly debt-scheme portfolio "
-    "disclosures of HDFC, SBI, ICICI Prudential, Aditya Birla SL, Axis, Nippon, "
-    "Kotak, UTI and Tata mutual funds; the figure in brackets after each holder "
-    "is that AMC's total market value across its schemes in INR crore. Yields "
-    "are as per each fund's valuation methodology and are not exchange-traded "
-    "levels. Where Src shows BSE/NSE, the yield is a recent exchange trade "
-    "that post-dates the MF mark. Spread (bps) = bond yield minus the yield of "
-    "the NABARD bond maturing within ±10 days that best balances maturity "
-    "match against yield freshness (NABARD Ref / Mat / Yld / As of show the "
-    "benchmark used); blank where no NABARD bond matures within ±10 days."
+    "NCDs and bonds only (convertibles and preference-style instruments "
+    "excluded). Yields are MF valuation marks or exchange trades, not "
+    "executable levels; ratings come from the ratings tracker where the "
+    "issuer is covered, else NSDL's at-issuance rating."
 )
+with st.expander("Methodology and data sources"):
+    st.caption(
+        "⚠️ Universe: non-convertible debentures and bonds only — convertibles "
+        "(CCD/OCD/PCD) and preference-share-style instruments are excluded. "
+        "Rating shows the latest rating from the ratings tracker DB (Rating Src "
+        "= agency) where the issuer is covered; otherwise the NSDL at-issuance "
+        "rating (Rating Src = NSDL), which can be dated. "
+        "Yield / As of / Holders come from the fortnightly debt-scheme portfolio "
+        "disclosures of HDFC, SBI, ICICI Prudential, Aditya Birla SL, Axis, Nippon, "
+        "Kotak, UTI and Tata mutual funds; the figure in brackets after each holder "
+        "is that AMC's total market value across its schemes in INR crore. Yields "
+        "are as per each fund's valuation methodology and are not exchange-traded "
+        "levels. Where Src shows BSE/NSE, the yield is a recent exchange trade "
+        "that post-dates the MF mark. Spread (bps) = bond yield minus the yield of "
+        "the NABARD bond maturing within ±10 days that best balances maturity "
+        "match against yield freshness (NABARD Ref / Mat / Yld / As of show the "
+        "benchmark used); blank where no NABARD bond matures within ±10 days."
+    )
+
+
 
 # ---- Contact footer ----
 st.markdown(
