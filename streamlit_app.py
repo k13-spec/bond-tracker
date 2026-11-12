@@ -2030,9 +2030,11 @@ for _c in ("Coupon Detail", "Rating", "Rating Src", "Src", "NABARD Ref",
     if _c in display_df.columns:
         display_df[_c] = display_df[_c].fillna("").astype(str)
 
-# Missing numbers / dates also render as a grey "None" in the grid. A pandas
-# Styler with na_rep="" blanks them while the underlying values stay numeric
-# (header-click sorting is unaffected). The Styler is skipped for very large
+# Number/date text comes from a pandas Styler (thousands separators,
+# dd/mm/yyyy) while the underlying values stay numeric, so header-click
+# sorting is unaffected. Note: the grid still shows a grey "None" for a
+# missing number (e.g. the coupon of a floating-rate bond); the Styler's
+# na_rep does not reach null cells. The Styler is skipped for very large
 # views, where its per-cell cost is not worth it.
 _NUM_FMT = {"Coupon Rate (%)": "{:.2f}", "Issue Size (Cr)": "{:,.0f}",
             "Yield (%)": "{:.2f}", "Spread (bps)": "{:.0f}",
@@ -2054,7 +2056,7 @@ _COLCFG = {
                               width="medium",
                               display_text=r"isin=(.*)$",
                               help="Click to see this bond's MF yield trendline over time"),
-        "Issuer":         st.column_config.TextColumn(width="large"),
+        "Issuer":         st.column_config.TextColumn(width="medium"),
         "Coupon Rate (%)": st.column_config.NumberColumn("Coupon (%)", format="%.2f",
                                                          help="Fixed coupon rate. Blank for floating-rate / market-linked bonds — see Coupon Detail. 0.00 = zero-coupon."),
         "Coupon Detail":  st.column_config.TextColumn("Coupon Detail", width="medium",
