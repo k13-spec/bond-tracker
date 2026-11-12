@@ -1,8 +1,8 @@
 [theme]
 # Portal-inspired — Indigo accent, warm light background, DM Sans
-primaryColor        = "#6366F1"
-backgroundColor     = "#F8F9FF"
-secondaryBackgroundColor = "#EEF2FF"
+primaryColor        = "#006A4E"
+backgroundColor     = "#FFFFFF"
+secondaryBackgroundColor = "#F1F7F4"
 textColor           = "#111827"
 font                = "sans serif"
 
