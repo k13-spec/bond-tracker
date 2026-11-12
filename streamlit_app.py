@@ -639,6 +639,9 @@ def _listing(mode: str | None) -> str:
     return "Unknown"
 
 
+PERP_YEAR = 9999     # NSDL's placeholder redemption year for perpetuals
+
+
 @st.cache_data(ttl=86400, show_spinner=False)   # cache 24 hours
 def load_bonds() -> pd.DataFrame:
     """Download and parse the active bond list from NSDL. Cached 24 h."""
@@ -737,6 +740,14 @@ def load_bonds() -> pd.DataFrame:
         _own_psu = df["Issuer Type"].fillna("").str.startswith("Public Sector")
         df["PSU"] = (_own_psu | df["Issuer"].apply(_is_psu)).map(
             {True: "PSU", False: "Non-PSU"})
+        # Perpetuals: NSDL files instruments with no redemption date (bank
+        # AT1s, NBFC perpetual debt, corporate perps) with the placeholder
+        # 31/12/9999. The date is kept as the sort key, so they rank as the
+        # longest maturity, but they are shown as "Perp" and have no
+        # days-to-maturity.
+        _perp = df["Maturity Date"].dt.year >= PERP_YEAR
+        df["Perpetual"] = _perp.map({True: "Yes", False: "No"})
+        df.loc[_perp, "Days to Maturity"] = pd.NA
     return df
 
 
@@ -1777,8 +1788,10 @@ with st.sidebar:
 
     # ---- Maturity ----
     maturity_years = sorted(df["Maturity Date"].dt.year.dropna().unique().astype(int).tolist())
-    selected_years = st.multiselect("Maturity year", maturity_years,
-                                    placeholder="All", key=f"flt_years_{_fe}")
+    selected_years = st.multiselect(
+        "Maturity year", maturity_years, placeholder="All",
+        format_func=lambda y: "Perp" if y >= PERP_YEAR else str(y),
+        key=f"flt_years_{_fe}")
     max_days = st.slider(
         "Maturing within N days (0 = no limit)",
         min_value=0, max_value=3650, value=int(_P.get("days", 0)), step=30,
@@ -2034,22 +2047,25 @@ for _c in ("Coupon Detail", "Rating", "Rating Src", "Src", "NABARD Ref",
 # dd/mm/yyyy) while the underlying values stay numeric, so header-click
 # sorting is unaffected. Note: the grid still shows a grey "None" for a
 # missing number (e.g. the coupon of a floating-rate bond); the Styler's
-# na_rep does not reach null cells. The Styler is skipped for very large
-# views, where its per-cell cost is not worth it.
+# na_rep does not reach null cells. The Styler also renders perpetuals'
+# placeholder date as "Perp", so it is applied to every view size.
 _NUM_FMT = {"Coupon Rate (%)": "{:.2f}", "Issue Size (Cr)": "{:,.0f}",
             "Yield (%)": "{:.2f}", "Spread (bps)": "{:.0f}",
             "NABARD Yield (%)": "{:.2f}", "Days to Maturity": "{:.0f}"}
 _DATE_COLS = ("Issue Date", "Maturity Date", "Rated On", "As of",
               "NABARD Mat", "NABARD As of")
+def _fmt_date(d):
+    return "Perp" if d.year >= PERP_YEAR else d.strftime("%d/%m/%Y")
+
+
 _table_data = display_df
-if display_df.shape[0] * display_df.shape[1] <= 120_000:
-    try:
-        _fmt = {c: f for c, f in _NUM_FMT.items() if c in display_df.columns}
-        _fmt.update({c: (lambda d: d.strftime("%d/%m/%Y"))
-                     for c in _DATE_COLS if c in display_df.columns})
-        _table_data = display_df.style.format(_fmt, na_rep="")
-    except Exception:
-        _table_data = display_df
+try:
+    pd.set_option("styler.render.max_elements", 2_000_000)
+    _fmt = {c: f for c, f in _NUM_FMT.items() if c in display_df.columns}
+    _fmt.update({c: _fmt_date for c in _DATE_COLS if c in display_df.columns})
+    _table_data = display_df.style.format(_fmt, na_rep="")
+except Exception:
+    _table_data = display_df
 
 _COLCFG = {
         "ISIN":           st.column_config.LinkColumn(
@@ -2062,7 +2078,7 @@ _COLCFG = {
         "Coupon Detail":  st.column_config.TextColumn("Coupon Detail", width="medium",
                                                       help="Zero Coupon, floating-rate formula, or market-linked underlying (from NSDL's coupon field)"),
         "Issue Date":     st.column_config.DateColumn("Issue Date", format="DD/MM/YYYY"),
-        "Maturity Date":  st.column_config.DateColumn("Maturity Date", format="DD/MM/YYYY"),
+        "Maturity Date":  st.column_config.DateColumn("Maturity Date", format="DD/MM/YYYY", help="Perp = perpetual (no redemption date; sorts as the longest maturity)"),
         "Days to Maturity": st.column_config.NumberColumn("Days Left", format="%d"),
         "Issue Size (Cr)": st.column_config.NumberColumn("Size (Cr)", format="%.0f",
                                                          help="Issue size in INR crore (from NSDL, filed in rupees). Blank where NSDL's figure is unreliable."),
@@ -2101,7 +2117,9 @@ if _table_data is not display_df:
                      ("NABARD Yield (%)", "NABARD Yld (%)"), ("Days to Maturity", "Days Left")]:
         _COLCFG[_c] = st.column_config.NumberColumn(_lbl)
     for _c in _DATE_COLS:
-        _COLCFG[_c] = st.column_config.DateColumn(_c)
+        _COLCFG[_c] = st.column_config.DateColumn(
+            _c, help=("Perp = perpetual (no redemption date); sorts as the "
+                      "longest maturity" if _c == "Maturity Date" else None))
 
 st.dataframe(
     _table_data,
@@ -2117,7 +2135,7 @@ st.dataframe(
 EXPORT_COLS = [
     "ISIN", "Issuer", "Type", "Series", "Coupon Rate (%)", "Coupon Detail",
     "MLD", "Coupon Type", "Coupon Freq", "Issue Date", "Maturity Date",
-    "Days to Maturity",
+    "Days to Maturity", "Perpetual",
     "Issue Size (Cr)", "Rating", "Rating Src", "Rated On", "Rating (NSDL)",
     "Rating (Full)", "Yield (%)", "As of",
     "Src", "Spread (bps)", "NABARD Ref", "NABARD Mat", "NABARD Yield (%)",
@@ -2127,7 +2145,9 @@ EXPORT_COLS = [
 ]
 export_df = filtered[[c for c in EXPORT_COLS if c in filtered.columns]].copy()
 export_df["Issue Date"]    = export_df["Issue Date"].dt.strftime("%d/%m/%Y")
+_exp_perp = export_df["Maturity Date"].dt.year >= PERP_YEAR
 export_df["Maturity Date"] = export_df["Maturity Date"].dt.strftime("%d/%m/%Y")
+export_df.loc[_exp_perp, "Maturity Date"] = "Perpetual"
 export_df["Rated On"]      = export_df["Rated On"].dt.strftime("%d/%m/%Y")
 for _c in ("NABARD Mat", "NABARD As of"):
     if _c in export_df.columns:
