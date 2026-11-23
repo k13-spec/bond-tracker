@@ -1,0 +1,124 @@
+# PROPOSED replacement for .github/workflows/mf-yields-refresh.yml
+# (staged here because workflow-file edits need the workflow scope this
+# integration lacks). To apply: copy everything below the marker over the
+# workflow file via the GitHub web editor or a local push, then delete
+# this file.
+# ---8<--- copy from the next line ---8<---
+# Fortnightly MF yield refresh — fully automated, no human intervention.
+#
+# Runs on GitHub's servers on the 5th & 20th of each month (10:00 IST),
+# with catch-up runs on the 6th & 21st that pick up any AMC files published
+# late (a catch-up run commits nothing if the data is already complete).
+#
+# Pipeline per run:
+#   fetch_disclosures.py  -> downloads the 9 AMCs' fortnightly disclosures
+#                            (HDFC, SBI, ICICI Pru, ABSL, Axis, Nippon,
+#                             Kotak, UTI, Tata); URL probes first, then a
+#                            headless-browser discovery pass for AMCs whose
+#                            filename conventions drift (ABSL, UTI)
+#   build_mf_yields.py    -> parses them into a snapshot CSV (yield, holders
+#                            incl. per-AMC market value in INR crore)
+#   update_yields.py      -> data/mf_yields.csv (latest, shown in the table)
+#                            data/mf_yields_history.csv (append-only, feeds
+#                            the per-ISIN yield trendline)
+#                            + per-AMC coverage audit (ABSENT-AMCS line)
+#   commit + push         -> the live app picks it up within its 1-h cache;
+#                            the commit message names any missing AMCs
+#   coverage gate         -> job FAILS (owner gets GitHub's email) when any
+#                            AMC contributed zero ISINs, after the commit,
+#                            so partial data lands but never silently
+#
+# Safety: update_yields.py aborts (and this job fails, emailing the repo
+# owner) if the snapshot has < 500 yields — a broken run never overwrites
+# good data. Trigger manually anytime from the Actions tab ("Run workflow").
+
+name: MF yields fortnightly refresh
+
+on:
+  schedule:
+    - cron: "30 4 5,6,20,21 * *"   # 10:00 IST on 5th/20th + catch-up next day
+  workflow_dispatch:
+    inputs:
+      as_of:
+        description: "Fortnight-end date YYYY-MM-DD (blank = auto: 15th or previous month-end)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests pandas openpyxl xlrd
+
+      - name: Compute fortnight-end date
+        id: date
+        env:
+          AS_OF_INPUT: ${{ github.event.inputs.as_of }}
+        run: |
+          if [ -n "$AS_OF_INPUT" ]; then
+            AS_OF="$AS_OF_INPUT"
+          else
+            AS_OF=$(python -c "from datetime import date, timedelta; t = date.today(); print(((t.replace(day=1) - timedelta(days=1)) if t.day < 13 else t.replace(day=15)).isoformat())")
+          fi
+          echo "as_of=$AS_OF" >> "$GITHUB_OUTPUT"
+          echo "Fortnight-end: $AS_OF"
+
+      - name: Download AMC disclosures
+        run: python fetch_disclosures.py "${{ steps.date.outputs.as_of }}" disclosures/ 2>&1 | tee fetch_log.txt
+
+      - name: Build yield snapshot
+        run: python build_mf_yields.py disclosures/ "${{ steps.date.outputs.as_of }}" 2>&1 | tee build_log.txt
+
+      - name: Fold snapshot into latest + history
+        run: python update_yields.py disclosures/mf_yields.csv . 2>&1 | tee update_log.txt
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/mf_yields.csv data/mf_yields_history.csv
+          if git diff --cached --quiet; then
+            echo "No data changes — nothing to commit (already up to date)."
+            exit 0
+          fi
+          N_YIELDS=$(grep -oP 'snapshot: \d+ ISINs, \K\d+' update_log.txt || echo "?")
+          MISSES=$(grep -c '^  MISS' fetch_log.txt || true)
+          ABSENT=$(grep -oP '^ABSENT-AMCS: \K.*' update_log.txt || echo "")
+          MSG="Auto-refresh MF yields as of ${{ steps.date.outputs.as_of }} (${N_YIELDS} yields, ${MISSES} missed downloads)"
+          if [ -n "$ABSENT" ] && [ "$ABSENT" != "none" ]; then
+            MSG="$MSG — MISSING AMCs: ${ABSENT}"
+          fi
+          git commit -m "$MSG"
+          git push
+
+      - name: Fail on AMC coverage gaps (data above already committed)
+        run: |
+          ABSENT=$(grep -oP '^ABSENT-AMCS: \K.*' update_log.txt || echo "")
+          if [ -n "$ABSENT" ] && [ "$ABSENT" != "none" ]; then
+            echo "::error::AMC(s) absent from this fortnight's snapshot: ${ABSENT}. Partial data was committed; fix fetch_disclosures.py (see fetch_log above for MISS lines and discovery candidates) and re-run this workflow with the same as_of date."
+            exit 1
+          fi
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## MF yields refresh — as of ${{ steps.date.outputs.as_of }}"
+            echo '```'
+            grep -E 'MISS|error|ABORT' fetch_log.txt update_log.txt 2>/dev/null || echo "All AMC downloads OK"
+            echo '```'
+            echo '```'
+            cat build_log.txt update_log.txt 2>/dev/null | tail -15
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
