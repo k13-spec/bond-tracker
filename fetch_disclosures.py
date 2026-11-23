@@ -10,22 +10,30 @@ Download the latest fortnightly debt-scheme portfolio disclosures from
 Usage:  python fetch_disclosures.py 2026-06-30 [out_dir]
         (date = the fortnight-end being fetched: 15th or month-end)
 
-Per-AMC quirks (re-verified 2026-08-20):
+Per-AMC quirks (re-verified 2026-08-20; discovery fallback added 2026-11-23):
   - HDFC: one xlsx per debt scheme, predictable S3 URLs; update HDFC_SCHEMES
     when schemes launch/merge/mature. Month in filename switched from full
     ("15-August-2026") to abbreviated ("15-Aug-2026") with the Aug-2026
     fortnight — both formats are probed.
   - ABSL: filename convention changes almost every fortnight — several
-    variants are probed (zip and xls).
+    variants are probed (zip and xls), and when ALL probes miss (as they
+    did every fortnight from 30-Sep-2026 to 15-Nov-2026), a headless-browser
+    pass renders their download page and discovers the real file URL.
   - Axis: CMS API (POST /cms/get-scheme-documents) with a static public
     Bearer token returns the exact document URL; legacy numeric-path probe
     kept as fallback.
   - Kotak: their listing API sits behind Radware bot-protection, but the
     S3 file host is open and the path is predictable — hit it directly.
   - UTI: JSON API needs browser-ish Accept/Referer headers and can 502
-    transiently; retried.
+    transiently; retried, with the same browser discovery as fallback
+    (UTI went missing from the 15-Nov-2026 snapshot).
   - Tata: Drupal CMS, predictable "Fortnightly Portfolio as on ..." URL in
     the publish-month folder (file for the 31st lands in next month's folder).
+
+Discovery fallback: discover_links() self-installs Playwright + Chromium at
+runtime (the workflow's install step can't be edited without the workflow
+scope this integration lacks — same pattern as curl_cffi in
+update_secondary.py). Any discovery failure degrades to the normal MISS.
 """
 import io
 import json
@@ -35,6 +43,7 @@ import time
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import unquote, urljoin
 
 import requests
 
@@ -49,13 +58,18 @@ AXIS_CMS_TOKEN = ("c060dc4235de5fefc8fe5da8ef2b64d59fdf4f46c8ebeddb394a47daeac8c
                   "713e38c38d778f9a7ec84bd4c094c0b5fa3cd8b3c5e9d5ae43b9a47ddcfe60b6"
                   "339fe8395818d3f21ffaaaca455fe03e48b47a5079bf4a2eb86fece310b253ff")
 
-# HDFC publishes one xlsx per debt scheme. Scheme list as of Aug-2026;
-# update if HDFC launches/merges debt schemes.
+# HDFC publishes one xlsx per debt scheme. Scheme list as of Nov-2026;
+# update when HDFC launches/merges debt schemes, and REMOVE schemes once
+# they mature — a matured scheme stops publishing and becomes a phantom
+# MISS forever. Removed 2026-11-23: "HDFC Nifty SDL Oct 2026 Index Fund"
+# (matured Oct-2026) and "HDFC FMP 1269D March 2023" (matured Sep-2026).
+# Next up for maturity: "HDFC Nifty G-Sec Dec 2026 Index Fund" (Dec-2026),
+# "HDFC Nifty G-Sec Jun 2027 / SDL Plus G-Sec Jun 2027" (Jun-2027).
 HDFC_SCHEMES = [
     "HDFC Ultra Short Term Fund", "HDFC Short Term Debt Fund",
     "HDFC Retirement Savings Fund - Hybrid-Debt Plan", "HDFC Overnight Fund",
     "HDFC NIFTY SDL Plus G-Sec Jun 2027 40.60 Index Fund",
-    "HDFC Nifty SDL Oct 2026 Index Fund", "HDFC Nifty G-Sec Sep 2032 Index Fund",
+    "HDFC Nifty G-Sec Sep 2032 Index Fund",
     "HDFC Nifty G-Sec Jun 2036 Index Fund", "HDFC Nifty G-Sec Jun 2027 Index Fund",
     "HDFC Nifty G-Sec July 2031 Index Fund", "HDFC Nifty G-Sec Dec 2026 Index Fund",
     "HDFC NIFTY G-Sec Apr 2029 Index Fund", "HDFC NIFTY 1D RATE LIQUID ETF",
@@ -65,7 +79,7 @@ HDFC_SCHEMES = [
     "HDFC Income Plus Arbitrage Omni FOF", "HDFC Income Plus Arbitrage Active FOF",
     "HDFC Income Fund", "HDFC Hybrid Debt Fund", "HDFC Gilt Fund",
     "HDFC FMP 2638D February 2023", "HDFC FMP 1876D March 2022",
-    "HDFC FMP 1861D March 2022", "HDFC FMP 1269D March 2023",
+    "HDFC FMP 1861D March 2022",
     "HDFC Floating Rate Debt Fund", "HDFC Dynamic Debt Fund",
     "HDFC Diversified Equity All Cap Active FOF",
     "HDFC CRISIL-IBX Financial Services 9-12 Months Debt Index Fund",
@@ -113,6 +127,105 @@ def try_urls(urls):
         except Exception:
             continue
     return None, None
+
+
+def date_tokens(d: date):
+    """Lowercase substrings that identify fortnight-end d inside a file URL,
+    covering the dd-mm-yy / dd-monthname-yyyy / monthname-dd style families
+    with every separator the AMCs have used so far."""
+    dd, mm = f"{d.day:02d}", f"{d.month:02d}"
+    yy, yyyy = d.strftime("%y"), d.strftime("%Y")
+    months = [d.strftime("%B").lower(), d.strftime("%b").lower()]
+    toks = set()
+    for m in [mm] + months:
+        for s in ("", "-", "_", " ", "."):
+            for day in (dd, str(d.day)):
+                for year in (yyyy, yy):
+                    toks.add(f"{day}{s}{m}{s}{year}")
+                    toks.add(f"{m}{s}{day}{s}{year}")
+                    toks.add(f"{m}{s}{day},{s}{year}")
+    return toks
+
+
+def discover_links(page_url, want_re, click_texts=(), settle_ms=6000):
+    """Last-resort link discovery for JS-rendered AMC download pages.
+
+    Loads the page in headless Chromium and returns every URL matching
+    want_re found in (a) network-response URLs, (b) URL-ish strings inside
+    JSON/JS/text response bodies, (c) rendered-DOM hrefs and page HTML.
+    click_texts are tab labels clicked after load (best-effort), since the
+    fortnightly list usually sits behind a tab.
+
+    Playwright + Chromium self-install at runtime if missing. Every failure
+    path returns [] so callers keep their normal MISS handling.
+    """
+    import subprocess
+    try:
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            print("  installing playwright + chromium (one-time)…", flush=True)
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "playwright"],
+                           check=True, timeout=600)
+            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                           check=True, timeout=900)
+            from playwright.sync_api import sync_playwright
+    except Exception as e:
+        print(f"  playwright unavailable ({e}) — skipping discovery", file=sys.stderr)
+        return []
+
+    urlish = re.compile(
+        r"https?://[^\s\"'<>\\)]+|(?<=[\"'])/[^\s\"'<>]+?\.(?:zip|xlsx?|pdf)(?=[\"'])",
+        re.I)
+    found, seen = [], set()
+
+    def note(u):
+        u = unquote(str(u)).strip()
+        if u.startswith("/"):
+            u = urljoin(page_url, u)
+        if u and u not in seen:
+            seen.add(u)
+            if want_re.search(u):
+                found.append(u)
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(user_agent=UA["User-Agent"])
+
+            def on_response(resp):
+                try:
+                    note(resp.url)
+                    ct = (resp.headers or {}).get("content-type", "")
+                    if any(t in ct for t in ("json", "javascript", "text")):
+                        body = resp.text()
+                        if len(body) < 3_000_000:
+                            for m in urlish.findall(body):
+                                note(m)
+                except Exception:
+                    pass
+
+            page.on("response", on_response)
+            page.goto(page_url, timeout=90_000, wait_until="domcontentloaded")
+            page.wait_for_timeout(settle_ms)
+            for t in click_texts:
+                try:
+                    page.get_by_text(t, exact=False).first.click(timeout=5_000)
+                    page.wait_for_timeout(settle_ms)
+                except Exception:
+                    pass
+            try:
+                for href in page.eval_on_selector_all(
+                        "a[href]", "els => els.map(e => e.href)"):
+                    note(href)
+                for m in urlish.findall(page.content()):
+                    note(m)
+            except Exception:
+                pass
+            browser.close()
+    except Exception as e:
+        print(f"  discovery failed on {page_url}: {e}", file=sys.stderr)
+    return found
 
 
 def fetch(d: date, out: Path):
@@ -166,11 +279,12 @@ def fetch(d: date, out: Path):
     else: print("  MISS", u)
 
     # ---- Aditya Birla SL (zip or xls; naming varies fortnight to
-    #      fortnight, so several conventions are probed) -----------------
+    #      fortnight — known conventions are probed first, then a
+    #      headless-browser pass discovers the real URL from their page) --
     print("Aditya Birla…")
     ddmmyy = f"{dd}{mm}{yy}"
     names = [
-        f"absl_fortnightly_portfolio_report_{ddmmyy}.zip",   # current (since 15-Aug-2026)
+        f"absl_fortnightly_portfolio_report_{ddmmyy}.zip",   # last known good (15-Aug..15-Sep-2026)
         f"sebi_fortnightly_portfolio_report_{ddmmyy}.zip",
         f"sebifortnightlyportfolioreport{ddmmyy}.xls",
         f"sebifortnightlyportfolioreport{ddmmyy}.xlsx",
@@ -183,15 +297,45 @@ def fetch(d: date, out: Path):
     urls = [f"https://mutualfund.adityabirlacapital.com/-/media/bsl/files/resources/"
             f"fortnightly-portfolio/{yyyy}/{n}" for n in names]
     content, matched = try_urls(urls)
+    if not content:
+        # The convention changed again after 15-Sep-2026 and every probe
+        # missed for four straight fortnights. Render the page instead of
+        # guessing: the file list is JS-loaded, so capture what the page
+        # itself downloads and links to.
+        print("  ABSL filename probes all missed — headless-browser discovery…")
+        links = discover_links(
+            "https://mutualfund.adityabirlacapital.com/forms-and-downloads/portfolio",
+            re.compile(r"fortnight", re.I),
+            click_texts=("Fortnightly Portfolio", "Fortnightly"))
+        cands = [u for u in links if re.search(r"\.(zip|xlsx?)(\?|$)", u, re.I)]
+        toks = date_tokens(d)
+        dated = [u for u in cands if any(t in u.lower() for t in toks)]
+        for u in dated:
+            try:
+                r = get(u)
+                if len(r.content) > 5000:
+                    content, matched = r.content, u
+                    print(f"  ABSL discovered via page: {u}")
+                    print("  NOTE: add this ABSL filename pattern to the probe "
+                          "list so the fast path works next fortnight.")
+                    break
+            except Exception as e:
+                print(f"  ABSL discovered candidate failed ({u}): {e}")
+        if not content and cands:
+            print(f"  ABSL discovery found fortnightly files, but none dated "
+                  f"{d.isoformat()} — candidates (is the file published yet?):")
+            for u in cands[:10]:
+                print(f"    {u}")
     if content:
-        if content[:2] == b"PK" and matched.endswith(".zip"):
+        if content[:2] == b"PK" and ".zip" in matched.lower():
             zipfile.ZipFile(io.BytesIO(content)).extractall(out / "absl")
             print("  unzipped absl:", matched.rsplit("/", 1)[-1])
         else:
             ext = ".xlsx" if content[:2] == b"PK" else ".xls"
             save(out / "absl" / f"absl{ext}", content)
-    else: print("  MISS ABSL — check mutualfund.adityabirlacapital.com → "
-                "Forms & Downloads → Portfolio → Fortnightly for the new filename")
+    else:
+        print("  MISS ABSL — check mutualfund.adityabirlacapital.com → "
+              "Forms & Downloads → Portfolio → Fortnightly for the new filename")
 
     # ---- Axis (CMS API returns the exact document URL) -----------------
     print("Axis…")
@@ -248,7 +392,7 @@ def fetch(d: date, out: Path):
         print("  MISS Kotak:", u)
 
     # ---- UTI (API returns CDN URL of consolidated zip; needs browser-ish
-    #      headers and can 502 transiently) ------------------------------
+    #      headers and can 502 transiently; browser discovery as fallback) --
     print("UTI…")
     uti_headers = {**UA, "Accept": "application/json",
                    "Referer": "https://www.utimf.com/forms-and-downloads/portfolio-disclosure"}
@@ -266,14 +410,45 @@ def fetch(d: date, out: Path):
         except Exception as e:
             print(f"  UTI API attempt {attempt + 1} failed: {e}")
             time.sleep(10 * (attempt + 1))
+    uti_ok = False
     if rows:
         try:
             content = get(rows[0]["url"]).content
             zipfile.ZipFile(io.BytesIO(content)).extractall(out / "uti")
             print("  unzipped uti")
+            uti_ok = True
         except Exception as e:
-            print("  MISS UTI (download/unzip):", e)
-    else:
+            print("  UTI API download/unzip failed:", e)
+    if not uti_ok:
+        print("  UTI API route failed — headless-browser discovery…")
+        links = discover_links(
+            "https://www.utimf.com/forms-and-downloads/portfolio-disclosure",
+            re.compile(r"debt|portfolio|fortnight", re.I),
+            click_texts=("Debt",))
+        zips = [u for u in links if re.search(r"\.zip(\?|$)", u, re.I)]
+        toks = date_tokens(d) | {
+            f"{half} {mon_full.lower()}", f"{half}-{mon_full.lower()}",
+            f"{half}_{mon_full.lower()}", f"{half}{mon_full.lower()}",
+            f"{half} {mon_abbr.lower()}", f"{half}-{mon_abbr.lower()}"}
+        dated = [u for u in zips if any(t in u.lower() for t in toks)]
+        for u in dated:
+            try:
+                content = get(u).content
+                zipfile.ZipFile(io.BytesIO(content)).extractall(out / "uti")
+                print(f"  unzipped uti (discovered: {u})")
+                uti_ok = True
+                break
+            except Exception as e:
+                print(f"  UTI discovered candidate failed ({u}): {e}")
+        if not uti_ok and zips:
+            print("  UTI discovery candidates (none matched the fortnight):")
+            for u in zips[:10]:
+                print(f"    {u}")
+    if uti_ok and not list((out / "uti").glob("Sebi Exposure*.xls*")):
+        print("  WARN: uti archive extracted but no 'Sebi Exposure*' workbook "
+              "found — build_mf_yields.py will ignore it; check the inner "
+              "filenames and widen the glob if UTI renamed them.")
+    if not uti_ok:
         print("  MISS UTI: no rows for", half, mon_full)
 
     # ---- Tata (Drupal CMS; one consolidated workbook) -------------------
